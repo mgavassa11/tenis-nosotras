@@ -1,0 +1,196 @@
+================================================================
+INSTRUCCIONES PASO A PASO — TENIS Y NOSOTRAS x CLUB24
+================================================================
+No necesitás saber programar. Solo seguí estos pasos en orden,
+uno por uno, sin saltarte ninguno. Cada paso tiene una marca
+de tiempo aproximada.
+
+Vas a usar 3 sitios web, todos gratis:
+  1) Supabase.com  → guarda los datos del torneo
+  2) GitHub.com     → guarda el código de la app
+  3) Vercel.com     → publica la app para que todos la vean
+
+
+================================================================
+PASO 1 — CREAR LA BASE DE DATOS EN SUPABASE (5 minutos)
+================================================================
+
+1. Andá a https://supabase.com y hacé click en "Start your project".
+2. Creá una cuenta (podés entrar con tu cuenta de Google).
+3. Hacé click en "New Project".
+4. Completá:
+   - Name: tenis-nosotras (o el nombre que quieras)
+   - Database Password: inventá una contraseña y GUARDALA en
+     algún lado (la vas a necesitar más adelante, anotala en
+     las notas de tu celular).
+   - Region: elegí la más cercana a Argentina (por ejemplo
+     "South America (São Paulo)").
+5. Hacé click en "Create new project" y esperá 1-2 minutos
+   mientras Supabase prepara todo.
+
+--- CREAR LAS TABLAS ---
+
+6. Una vez que el proyecto esté listo, en el menú de la
+   izquierda buscá el ícono que dice "SQL Editor" (parece una
+   hoja con un símbolo de código) y hacé click ahí.
+7. Hacé click en "New query".
+8. Abrí el archivo "supabase_setup.sql" que te entregamos junto
+   con estas instrucciones. COPIÁ TODO el contenido de ese
+   archivo (Ctrl+A y luego Ctrl+C, o seleccioná todo y copiá).
+9. PEGALO en el cuadro de texto grande del SQL Editor de
+   Supabase.
+10. Hacé click en el botón verde "RUN" (o "Ejecutar") que está
+    abajo a la derecha.
+11. Si todo salió bien, vas a ver un mensaje de éxito en verde.
+    Si ves un error, revisá que copiaste TODO el archivo sin
+    cortar nada.
+
+--- COPIAR TUS CLAVES ---
+
+12. En el menú de la izquierda, buscá el ícono de un engranaje
+    que dice "Project Settings" y hacé click ahí.
+13. Hacé click en "API" (puede estar bajo "Configuration").
+14. Vas a ver dos datos importantes:
+    - "Project URL" → es un link que empieza con https://
+    - "Project API keys" → ahí buscá la que dice "anon" "public"
+15. COPIÁ esos dos valores, los vas a necesitar en el PASO 3.
+    Podés dejar esta pestaña abierta o anotarlos en algún lado.
+
+
+================================================================
+PASO 2 — SUBIR EL CÓDIGO A GITHUB (5 minutos)
+================================================================
+
+1. Andá a https://github.com y creá una cuenta si no tenés
+   (es gratis).
+2. Una vez adentro, hacé click en el botón verde "New" (o el
+   símbolo "+" arriba a la derecha → "New repository").
+3. Completá:
+   - Repository name: tenis-nosotras
+   - Dejalo como "Public"
+   - NO marques ninguna casilla de "Add a README" etc.
+4. Hacé click en "Create repository".
+5. Te va a aparecer una página con instrucciones técnicas —
+   IGNORALAS. En cambio, buscá el link que dice
+   "uploading an existing file" (es un texto azul, está en el
+   medio de la página) y hacé click ahí.
+6. Te va a aparecer una zona para arrastrar archivos. Andá a la
+   carpeta donde tenés los archivos que te entregamos
+   (tenis-app) y ARRASTRÁ TODA LA CARPETA "public" completa, y
+   también el archivo "vercel.json" suelto.
+   - Si tu navegador no te deja arrastrar la carpeta completa,
+     entrá a la carpeta "public" y arrastrá los archivos de
+     adentro uno por uno: index.html, app.js, config.js
+7. Esperá a que termine de subir (vas a ver una barra de
+   progreso).
+8. Abajo de todo hay un botón verde que dice "Commit changes".
+   Hacé click ahí.
+
+¡Listo! Tu código ya está en GitHub.
+
+
+================================================================
+PASO 3 — COMPLETAR config.js CON TUS DATOS DE SUPABASE
+   (3 minutos)
+================================================================
+
+1. Dentro de tu repositorio en GitHub, buscá el archivo
+   "config.js" (debería estar dentro de la carpeta "public").
+2. Hacé click en el archivo para abrirlo.
+3. Arriba a la derecha vas a ver un ícono de lápiz (Edit). Hacé
+   click ahí.
+4. Vas a ver dos líneas que dicen:
+
+   const SUPABASE_URL = "PEGA_ACA_TU_PROJECT_URL";
+   const SUPABASE_KEY = "PEGA_ACA_TU_ANON_KEY";
+
+5. Reemplazá el texto "PEGA_ACA_TU_PROJECT_URL" (sin borrar las
+   comillas) por el "Project URL" que copiaste en el PASO 1.
+6. Reemplazá el texto "PEGA_ACA_TU_ANON_KEY" (sin borrar las
+   comillas) por la clave "anon public" que copiaste en el
+   PASO 1.
+7. Si querés, también podés cambiar la contraseña de
+   administrador en la línea:
+
+   const ADMIN_PASSWORD = "tenis2026";
+
+   Cambiá "tenis2026" por la contraseña que quieras usar.
+8. Scrolleá hacia abajo y hacé click en el botón verde
+   "Commit changes" para guardar.
+
+
+================================================================
+PASO 4 — PUBLICAR LA APP CON VERCEL (5 minutos)
+================================================================
+
+1. Andá a https://vercel.com
+2. Hacé click en "Sign Up" y elegí "Continue with GitHub" (así
+   se conecta directo con la cuenta que ya creaste).
+3. Autorizá la conexión cuando te lo pida.
+4. Una vez adentro, hacé click en "Add New..." → "Project".
+5. Vas a ver una lista de tus repositorios de GitHub. Buscá
+   "tenis-nosotras" y hacé click en "Import" al lado de su
+   nombre.
+6. Vercel va a detectar automáticamente la configuración (no
+   toques nada, dejalo como está).
+7. Hacé click en el botón "Deploy".
+8. Esperá 1-2 minutos. Cuando termine vas a ver fuegos
+   artificiales 🎉 y un botón que dice "Visit" — ese es el link
+   de tu app, funciona para celular y computadora.
+
+¡FELICITACIONES! Tu app ya está online. El link que te dio
+Vercel (algo como tenis-nosotras.vercel.app) es el que vas a
+compartir con todas las jugadoras.
+
+
+================================================================
+CÓMO PROBAR QUE TODO FUNCIONA
+================================================================
+
+1. Abrí el link de Vercel en tu computadora — deberías ver la
+   pantalla de "Jugadoras" con las categorías y grupos ya
+   cargados.
+2. Abrí el mismo link en tu celular (mandátelo por WhatsApp a
+   vos misma, o escribilo en el navegador) — debería verse
+   igual de bien, ajustado a la pantalla chica.
+3. Hacé click en "Administrador" y entrá con tu contraseña.
+4. Probá cargar un resultado de prueba y fijate que se vea
+   reflejado también en el celular (puede tardar unos segundos
+   en actualizarse si no recargás la página).
+
+
+================================================================
+SI ALGO NO FUNCIONA
+================================================================
+
+• "No se pudo conectar con la base de datos":
+  → Revisá el PASO 3. Probablemente copiaste mal la URL o la
+    clave de Supabase en config.js. Fijate que no haya espacios
+    de más ni que falten las comillas.
+
+• La página queda en blanco o dice "Cargando..." para siempre:
+  → Lo más probable es que el PASO 1 (crear las tablas) no se
+    haya ejecutado bien. Volvé a Supabase → SQL Editor y
+    ejecutá de nuevo el script completo.
+
+• Hice cambios en GitHub pero la app no se actualiza:
+  → Vercel actualiza solo, pero puede tardar 1-2 minutos.
+    Probá recargar la página con Ctrl+Shift+R (o Cmd+Shift+R
+    en Mac) para forzar que cargue la versión nueva.
+
+• Quiero cambiar algo (colores, textos, etc.):
+  → Avisame qué querés cambiar y te doy el código actualizado
+    para que reemplaces el archivo correspondiente en GitHub.
+
+
+================================================================
+RESUMEN DE ARCHIVOS QUE TE ENTREGAMOS
+================================================================
+tenis-app/
+├── vercel.json              ← configuración para Vercel
+├── supabase_setup.sql       ← script para crear las tablas
+├── INSTRUCCIONES.txt        ← este archivo
+└── public/
+    ├── index.html           ← la página principal
+    ├── app.js                ← toda la lógica del torneo
+    └── config.js             ← acá pegás tus claves de Supabase
