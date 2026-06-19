@@ -6,8 +6,8 @@
 // Copiá "Project URL" y pegalo abajo en SUPABASE_URL
 // Copiá "anon public" key y pegalo abajo en SUPABASE_KEY
 
-const SUPABASE_URL = "PEGA_ACA_TU_PROJECT_URL";
-const SUPABASE_KEY = "PEGA_ACA_TU_ANON_KEY";
+const SUPABASE_URL = "https://polwddahqdrvkvoddmhc.supabase.co";
+const SUPABASE_KEY = "sb_publishable_i8cjlNcXRgn3RVSmojfvvA_1hUYed57";
 
 // Contraseña que vas a usar para entrar como Administrador en la app
-const ADMIN_PASSWORD = "tenis2026";
+const ADMIN_PASSWORD = "tenis2026?!";
