@@ -1032,6 +1032,7 @@ function renderSectionPlayoff(cat){
   html+=`<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">
     <button class="btn btn-out btn-sm" onclick="generarPreview('${cat}')">${isPreview?'Generar / actualizar':'Actualizar'} vista previa</button>
     ${po?`<button class="btn btn-blk btn-sm" onclick="confirmarPlayoff('${cat}')">Confirmar cuadro definitivo</button>`:''}
+    ${po?`<button class="btn btn-red btn-sm" onclick="resetPlayoff('${cat}')">Resetear cuadro de playoff</button>`:''}
   </div>`;
 
   if(po){
@@ -1154,6 +1155,13 @@ async function confirmarPlayoff(cat){
   if(playoffData[cat]) playoffData[cat].isPreview=false;
   await supabaseClient.from('playoff').upsert({categoria:cat,datos:{rounds:playoffData[cat].rounds},es_vista_previa:false});
   renderA();renderJContent();showToast('Cuadro confirmado ✓');
+}
+async function resetPlayoff(cat){
+  const ok=confirm('¿Seguro que querés eliminar el cuadro de playoff de esta categoría? Se van a borrar las parejas asignadas a cada cruce y los resultados ya cargados en el playoff. Los resultados de la zona de grupos NO se van a tocar. Después vas a poder volver a generarlo desde cero.');
+  if(!ok)return;
+  playoffData[cat]=null;
+  await supabaseClient.from('playoff').delete().eq('categoria',cat);
+  renderA();renderJContent();showToast('Cuadro de playoff eliminado');
 }
 async function editPOT(cat,ri,mi,f,v){
   playoffData[cat].rounds[ri].matches[mi][f]=v||null;
