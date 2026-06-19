@@ -878,14 +878,21 @@ async function saveSchedGeneric(mId){
   await saveSchedToDB(mId);
   renderJContent();showToast('Horario guardado');
 }
-// IMPORTANTE: el checkbox refleja su nuevo estado de inmediato (this.checked),
-// y recién después de guardar y volver a renderizar queda consistente con la base.
+// El checkbox queda tildado al instante (estado del DOM tras el click del usuario).
+// Guardamos en memoria y en la base, y si algo falla avisamos por toast en vez
+// de fallar en silencio (lo cual antes podía dejar el checkbox desincronizado
+// al volver a renderizar).
 async function toggleAfter(mId){
   const checkboxEl=document.getElementById(`after_${mId}`);
-  const checked=checkboxEl.checked; // ya tiene el valor actualizado por el click del usuario
+  const checked=checkboxEl.checked;
   const cur=getSched(mId);
   matchSchedule[mId]={...cur,after:checked,hora:checked?'':cur.hora,afterMatchId:checked?cur.afterMatchId:''};
-  await saveSchedToDB(mId);
+  try{
+    await saveSchedToDB(mId);
+  }catch(e){
+    console.error('Error guardando en Supabase:',e);
+    showToast('No se pudo guardar — revisá tu conexión');
+  }
   renderA();
   renderJContent();
 }
