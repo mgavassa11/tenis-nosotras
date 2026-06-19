@@ -262,12 +262,11 @@ function getSeeds(cat){
   });
   firsts.sort((a,b)=>b.pts-a.pts||b.bal-a.bal||b.gg-a.gg);
   seconds.sort((a,b)=>b.pts-a.pts||b.bal-a.bal||b.gg-a.gg);
-  const needTotal=cfg.total;
-  let qF=firsts.slice(0,needTotal);
-  let qS=[];
-  if(qF.length<needTotal){
-    qS=seconds.slice(0,needTotal-qF.length);
-  }
+  // El cuadro siempre enfrenta 1ro vs 2do, así que necesitamos la mitad de
+  // cupos para primeros y la otra mitad para segundos (los mejores de cada lista).
+  const half=cfg.total/2;
+  const qF=firsts.slice(0,half);
+  const qS=seconds.slice(0,half);
   return{firsts,seconds,qualFirsts:qF,qualSeconds:qS,cfg};
 }
 function getChampion(cat){
@@ -359,7 +358,13 @@ function renderPublicView(cat,subTab,targetElId){
   if(!el)return;
   let html='';
   if(subTab==='proximos'){
-    const pend=partidos.filter(m=>m.cat===cat&&!m.played);
+    const pendGrupos=partidos.filter(m=>m.cat===cat&&!m.played);
+    const pendPlayoff=playoffData[cat]
+      ? playoffData[cat].rounds.flatMap(r=>r.matches
+          .filter(m=>m.p1&&m.p2&&(!m.sets||!m.sets.length))
+          .map(m=>({...m,grupoId:r.name,isPlayoff:true})))
+      : [];
+    const pend=[...pendPlayoff,...pendGrupos];
     html+=`<div class="phase-label">Próximos partidos</div>`;
     if(!pend.length){html+='<div class="empty">No hay partidos pendientes.</div>';}
     else{pend.forEach(m=>{html+=renderPCard(m);});}
@@ -384,7 +389,28 @@ function renderPublicView(cat,subTab,targetElId){
     </div>`;
   }
 
-  html+=`<div class="phase-label">Zona de grupos</div>`;
+  // PLAYOFF ARRIBA, si ya fue creado
+  if(playoffData[cat]){
+    html+=`<div class="phase-label">Playoff</div>`;
+    if(playoffData[cat].isPreview){
+      html+=`<div class="preview-banner">⚠️ Vista previa — el administrador todavía puede modificar este cuadro.</div>`;
+    }
+    html+=renderBracketTree(playoffData[cat]);
+    const champ=getChampion(cat);
+    if(champ){
+      const p=getP(champ);
+      html+=`<div class="champion-card">
+        <div class="medal">🥇</div>
+        <div class="ctext">
+          <div class="clabel">Campeón</div>
+          <div class="cnames">${p?p.j1:''} / ${p?p.j2:''}</div>
+        </div>
+      </div>`;
+    }
+  }
+
+  // ZONA DE GRUPOS DEBAJO
+  html+=`<div class="phase-label" style="margin-top:${playoffData[cat]?'1.8rem':'0'};">Zona de grupos</div>`;
   grupos[cat].forEach(g=>{
     const stats=getStats(g.id,cat);
     const cut=getCutPos();
@@ -444,24 +470,6 @@ function renderPublicView(cat,subTab,targetElId){
     }
   }
 
-  if(playoffData[cat]){
-    html+=`<div class="phase-label" style="margin-top:1.5rem;">Playoff</div>`;
-    if(playoffData[cat].isPreview){
-      html+=`<div class="preview-banner">⚠️ Vista previa — el administrador todavía puede modificar este cuadro.</div>`;
-    }
-    html+=renderBracketTree(playoffData[cat]);
-    const champ=getChampion(cat);
-    if(champ){
-      const p=getP(champ);
-      html+=`<div class="champion-card">
-        <div class="medal">🥇</div>
-        <div class="ctext">
-          <div class="clabel">Campeón</div>
-          <div class="cnames">${p?p.j1:''} / ${p?p.j2:''}</div>
-        </div>
-      </div>`;
-    }
-  }
   el.innerHTML=html||'<div class="empty">No hay datos.</div>';
 }
 
@@ -536,8 +544,9 @@ function renderPCard(m){
       ${sched.after&&disp.waitNames?`<div class="after-note">${disp.waitNames}</div>`:''}
     </div>`;
   }
+  const labelText=m.isPlayoff?m.grupoId:`Grupo ${m.grupoId}`;
   return `<div class="partido">
-    <div class="phdr"><span>Grupo ${m.grupoId}${stag}</span></div>
+    <div class="phdr"><span>${labelText}${stag}</span></div>
     <div class="pbody">
       <div class="pbody-teams">
         <div class="trow"><span class="tname ${win===m.p1?'win':''}">${n1} / ${nn1}</span><div class="srow">${s1}</div></div>
@@ -870,9 +879,44 @@ async function saveSchedToDB(mId){
     partido_id:mId,cancha:s.cancha,hora:s.hora,a_continuacion:s.after,a_continuacion_de:s.afterMatchId
   });
 }
+
+// Devuelve el partido (si existe) que ya tiene asignada la misma cancha + hora
+// que se está por guardar, excluyendo al propio partido que se está editando.
+// Solo compara contra partidos que también tengan cancha Y hora cargadas
+// (si falta alguno de los dos datos, no se considera conflicto).
+function findScheduleConflict(mId,cancha,hora){
+  if(!cancha||!hora)return null; // sin ambos datos no hay forma de chocar
+  const allMatchIds=Object.keys(matchSchedule);
+  for(const otherId of allMatchIds){
+    if(otherId===mId)continue;
+    const other=matchSchedule[otherId];
+    if(!other||other.after)continue; // "a continuación de" no tiene hora fija, no choca
+    if(other.cancha===cancha && other.hora===hora){
+      const m=findMatchById(otherId);
+      return m||{id:otherId};
+    }
+  }
+  return null;
+}
+
 async function saveSchedGeneric(mId){
   const c=document.getElementById(`cancha_${mId}`)?.value||'';
   const h=document.getElementById(`hora_${mId}`)?.value||'';
+
+  const conflict=findScheduleConflict(mId,c,h);
+  if(conflict){
+    const n1=conflict.p1?pNombre(conflict.p1):'?',n2=conflict.p2?pNombre(conflict.p2):'?';
+    showToast(`⚠️ Cancha ${c} a las ${h} ya está asignada a: ${n1} vs ${n2}`);
+    // Revertimos los inputs al valor anterior guardado, para que no quede
+    // una asignación duplicada cargada en pantalla sin haberse guardado.
+    const prev=getSched(mId);
+    const cInput=document.getElementById(`cancha_${mId}`);
+    const hInput=document.getElementById(`hora_${mId}`);
+    if(cInput)cInput.value=prev.cancha||'';
+    if(hInput)hInput.value=prev.hora||'';
+    return;
+  }
+
   const cur=getSched(mId);
   matchSchedule[mId]={...cur,cancha:c,hora:h};
   await saveSchedToDB(mId);
@@ -1052,19 +1096,24 @@ function renderSectionPlayoff(cat){
     }
     html+=`</div>`;
 
-    html+=`<div style="margin-top:1.5rem;font-size:12px;font-weight:500;color:var(--pink);">Editar cruces y resultados</div>`;
+    html+=`<div style="margin-top:1.5rem;font-size:12px;font-weight:500;color:var(--pink);">Editar cruces, cancha/hora y resultados</div>`;
     const allPs=grupos[cat].flatMap(g=>g.parejas);
     po.rounds.forEach((r,ri)=>{
       html+=`<div style="font-size:12px;font-weight:500;color:var(--gray);margin:10px 0 6px;">${r.name}</div>`;
       r.matches.forEach((m,mi)=>{
         const n1=m.p1?pNombre(m.p1):'Por definir',n2=m.p2?pNombre(m.p2):'Por definir';
         const opts=p=>allPs.map(x=>`<option value="${x.id}" ${m[p]===x.id?'selected':''}>${x.j1} / ${x.j2}</option>`).join('');
+        const sched=getSched(m.id);
         html+=`<div style="padding:10px;background:#fafafa;border:1.5px solid #ddd;border-radius:10px;margin-bottom:8px;">
           <div style="font-size:11px;color:var(--gray-light);margin-bottom:6px;">${r.name} — Cruce ${mi+1}</div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
             <div><label style="margin-top:0;">Pareja A</label><select onchange="editPOT('${cat}',${ri},${mi},'p1',this.value)"><option value="">— Por definir —</option>${opts('p1')}</select></div>
             <div><label style="margin-top:0;">Pareja B</label><select onchange="editPOT('${cat}',${ri},${mi},'p2',this.value)"><option value="">— Por definir —</option>${opts('p2')}</select></div>
-          </div>`;
+          </div>
+          ${m.p1&&m.p2?`<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+            <div><label style="margin-top:0;font-size:11px;">Cancha</label><input type="number" min="1" max="20" placeholder="N°" id="cancha_${m.id}" value="${sched.cancha}" onchange="saveSchedGeneric('${m.id}')"></div>
+            <div><label style="margin-top:0;font-size:11px;">Hora</label><input type="time" id="hora_${m.id}" value="${sched.hora}" ${sched.after?'disabled':''} onchange="saveSchedGeneric('${m.id}')"></div>
+          </div>`:''}`;
         if(m.sets&&m.sets.length){
           let w1=0,w2=0;m.sets.forEach(s=>{if(s[0]>s[1])w1++;else w2++;});
           html+=`<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;background:#fff;border:1px solid #eee;border-radius:8px;font-size:12px;flex-wrap:wrap;gap:6px;">
@@ -1089,52 +1138,87 @@ async function setPlayoffMode(cat,mode){
   await supabaseClient.from('configuracion').upsert({clave:'playoff_mode',valor:playoffMode});
   renderA();
 }
-function buildSeedingNoGroupClash(seeds, slotsCount){
-  const template = slotsCount===8 ? [[0,7],[3,4],[1,6],[2,5]] : [[0,3],[1,2]];
-  let arr=[...seeds];
-  function hasClash(a){
-    return template.some(([i,j])=> a[i] && a[j] && a[i].grupoId===a[j].grupoId);
-  }
-  if(!hasClash(arr)) return arr;
-  for(let attempt=0; attempt<50 && hasClash(arr); attempt++){
-    for(const [i,j] of template){
-      if(arr[i]&&arr[j]&&arr[i].grupoId===arr[j].grupoId){
-        let swapped=false;
-        for(let k=0;k<arr.length;k++){
-          if(k===i||k===j)continue;
-          const kPair=template.find(p=>p.includes(k));
-          const kPartner=kPair[0]===k?kPair[1]:kPair[0];
-          if(arr[k] && arr[kPartner] && arr[i].grupoId!==arr[k].grupoId && (!arr[kPartner]||arr[kPartner].grupoId!==arr[j].grupoId)){
-            const tmp=arr[j];arr[j]=arr[k];arr[k]=tmp;
-            swapped=true;
-            break;
-          }
-        }
-        if(swapped)break;
+// Arma los cruces siempre 1ro vs 2do (nunca 1ro-vs-1ro ni 2do-vs-2do),
+// emparejando el mejor 1ro con el mejor 2do disponible que NO sea de su mismo grupo,
+// y así sucesivamente. Si el mejor 2do es del mismo grupo que el 1ro que le toca,
+// se intercambia con el siguiente 2do disponible que sí sea válido.
+function buildFirstVsSecondPairing(firsts, seconds){
+  const usedSeconds=new Array(seconds.length).fill(false);
+  const pairs=[]; // {first, second}
+  firsts.forEach(f=>{
+    // Buscar el mejor 2do disponible que no sea de su mismo grupo
+    let chosenIdx=-1;
+    for(let i=0;i<seconds.length;i++){
+      if(usedSeconds[i])continue;
+      if(seconds[i].grupoId===f.grupoId)continue; // evitar mismo grupo
+      chosenIdx=i;
+      break;
+    }
+    // Si todos los disponibles son del mismo grupo (caso límite), tomar el mejor disponible igual
+    if(chosenIdx===-1){
+      for(let i=0;i<seconds.length;i++){
+        if(!usedSeconds[i]){chosenIdx=i;break;}
       }
     }
-  }
-  return arr;
+    if(chosenIdx!==-1){
+      usedSeconds[chosenIdx]=true;
+      pairs.push({first:f,second:seconds[chosenIdx]});
+    }else{
+      pairs.push({first:f,second:null});
+    }
+  });
+  return pairs;
 }
-function buildRoundsForMode(cat,seeds){
+
+// Distribuye los cruces (1ro vs 2do) en el cuadro de playoff respetando el
+// "seeding" clásico: el cruce del mejor 1ro va en una punta del cuadro, el del
+// 2do mejor 1ro en la otra punta, etc. — para que los mejores se encuentren
+// recién en semis/final, no en la primera ronda.
+function seedPositionsForBracket(n){
+  // n = cantidad de cruces de primera ronda (2 para semis, 4 para cuartos)
+  // Devuelve el orden de posiciones estándar de un bracket de single elimination
+  if(n===2) return [0,1];
+  if(n===4) return [0,3,1,2]; // 1° arriba, 4° abajo del mismo lado, 2° y 3° del otro lado
+  // fallback genérico (no debería usarse con los formatos actuales: 4 u 8)
+  const arr=[0];
+  let size=1;
+  while(size<n){
+    const next=[];
+    for(const pos of arr){ next.push(pos); next.push(size*2-1-pos); }
+    arr.length=0; arr.push(...next);
+    size*=2;
+  }
+  return arr.slice(0,n);
+}
+
+function buildRoundsForMode(cat,seedsData){
   const cfg=getPlayoffConfig(cat);
-  const seeded=buildSeedingNoGroupClash(seeds, cfg.total);
-  const fill=i=>seeded[i]?.id||null;
+  const{firsts,seconds}=seedsData; // ya ordenados por desempeño, sin recortar
+  const slotsNeeded=cfg.total/2; // cantidad de cruces 1ro-vs-2do en la primera ronda
+
+  const pairs=buildFirstVsSecondPairing(
+    firsts.slice(0,slotsNeeded),
+    seconds.slice(0,slotsNeeded)
+  );
+
+  const order=seedPositionsForBracket(slotsNeeded);
+  const orderedPairs=order.map(i=>pairs[i]||{first:null,second:null});
+
   if(cfg.total===4){
     return[
       {name:'Semifinales',matches:[
-        {id:'sf1',p1:fill(0),p2:fill(3),sets:[],winner:null},
-        {id:'sf2',p1:fill(1),p2:fill(2),sets:[],winner:null},
+        {id:'sf1',p1:orderedPairs[0]?.first?.id||null,p2:orderedPairs[0]?.second?.id||null,sets:[],winner:null},
+        {id:'sf2',p1:orderedPairs[1]?.first?.id||null,p2:orderedPairs[1]?.second?.id||null,sets:[],winner:null},
       ]},
       {name:'Final',matches:[{id:'f1',p1:null,p2:null,sets:[],winner:null}]},
     ];
   }
   return[
     {name:'Cuartos de final',matches:[
-      {id:'qf1',p1:fill(0),p2:fill(7),sets:[],winner:null},
-      {id:'qf2',p1:fill(3),p2:fill(4),sets:[],winner:null},
-      {id:'qf3',p1:fill(1),p2:fill(6),sets:[],winner:null},
-      {id:'qf4',p1:fill(2),p2:fill(5),sets:[],winner:null},
+      {id:'qf1',p1:orderedPairs[0]?.first?.id||null,p2:orderedPairs[0]?.second?.id||null,sets:[],winner:null},
+      {id:'qf2',p1:orderedPairs[1]?.first?.id||null,p2:orderedPairs[1]?.second?.id||null,sets:[],winner:null},
+      {id:'qf3',p1:orderedPairs[2]?.first?.id||null,p2:orderedPairs[2]?.second?.id||null,sets:[],winner:null},
+      {id:'qf4',p1:orderedPairs[3]?.first?.id||null,p2:orderedPairs[3]?.second?.id||null,sets:[],winner:null},
     ]},
     {name:'Semifinales',matches:[
       {id:'sf1',p1:null,p2:null,sets:[],winner:null},
@@ -1144,9 +1228,8 @@ function buildRoundsForMode(cat,seeds){
   ];
 }
 async function generarPreview(cat){
-  const{qualFirsts,qualSeconds}=getSeeds(cat);
-  const seeds=[...qualFirsts,...qualSeconds];
-  const rounds=buildRoundsForMode(cat,seeds);
+  const seedsData=getSeeds(cat);
+  const rounds=buildRoundsForMode(cat,seedsData);
   playoffData[cat]={rounds,isPreview:true};
   await supabaseClient.from('playoff').upsert({categoria:cat,datos:{rounds},es_vista_previa:true});
   renderA();renderJContent();showToast('Vista previa generada');
