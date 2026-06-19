@@ -33,6 +33,7 @@ const GRUPOS_INICIALES = {
 };
 
 const TB_LABELS={pts:'Puntos',bal:'Balance de games',gg:'Games ganados',h2h:'Enfrentamiento directo'};
+const CAT_LABELS={"1era":"1era","2da":"2da","3era":"3era"};
 
 // ---- ESTADO GLOBAL (se llena leyendo de Supabase) ----
 let grupos={"1era":[],"2da":[],"3era":[]};
@@ -647,7 +648,7 @@ function renderAContent(){
     return;
   }
   if(state.adminSection==='pairs') html=renderSectionPairs(cat);
-  else if(state.adminSection==='sched') html=renderSectionSched(cat);
+  else if(state.adminSection==='sched') html=renderSectionSched();
   else if(state.adminSection==='results') html=renderSectionResults(cat);
   else if(state.adminSection==='playoff') html=renderSectionPlayoff(cat);
   else if(state.adminSection==='tiebreak') html=renderSectionTiebreak();
@@ -795,11 +796,24 @@ async function regenerateMatchesForGroup(cat,gid){
   }
 }
 
-function renderSectionSched(cat){
-  const groupMatches=partidos.filter(m=>m.cat===cat&&!m.played);
-  const playoffMatches=playoffData[cat]?playoffData[cat].rounds.flatMap(r=>r.matches.filter(m=>!m.sets||!m.sets.length).map(m=>({...m,isPlayoff:true,roundName:r.name}))):[];
-  const allMatches=[...groupMatches,...playoffMatches];
-  let html=`<div class="ibar">Asigná cancha y hora. Si todavía no sabés la hora, elegí "A continuación de" y seleccioná qué partido tiene que terminar antes.</div>`;
+// ====================================================
+// CANCHAS Y HORARIOS — ahora muestra TODAS las categorías juntas
+// ====================================================
+function renderSectionSched(){
+  // Reunir partidos pendientes de grupos de las 3 categorías
+  let allMatches=[];
+  ["1era","2da","3era"].forEach(cat=>{
+    const groupMatches=partidos.filter(m=>m.cat===cat&&!m.played).map(m=>({...m,catLabel:CAT_LABELS[cat]}));
+    allMatches=allMatches.concat(groupMatches);
+    if(playoffData[cat]){
+      const poMatches=playoffData[cat].rounds.flatMap(r=>
+        r.matches.filter(m=>!m.sets||!m.sets.length).map(m=>({...m,isPlayoff:true,roundName:r.name,cat,catLabel:CAT_LABELS[cat]}))
+      );
+      allMatches=allMatches.concat(poMatches);
+    }
+  });
+
+  let html=`<div class="ibar">Asigná cancha y hora a los partidos de las 3 categorías. Si todavía no sabés la hora, elegí "A continuación de" y seleccioná qué partido tiene que terminar antes.</div>`;
   if(!allMatches.length) return html+'<div class="empty">No hay partidos pendientes de programar.</div>';
 
   const usedAsReference=new Set(
@@ -808,14 +822,16 @@ function renderSectionSched(cat){
       .map(m=>getSched(m.id).afterMatchId)
   );
   const allMatchOptions=allMatches.map(m=>{
-    const label=m.isPlayoff?`${m.roundName}: ${m.p1?pJ1(m.p1):'?'} vs ${m.p2?pJ1(m.p2):'?'}`:`Grupo ${m.grupoId}: ${pJ1(m.p1)} vs ${pJ1(m.p2)}`;
+    const label=m.isPlayoff
+      ? `Cat. ${m.catLabel} — ${m.roundName}: ${m.p1?pJ1(m.p1):'?'} vs ${m.p2?pJ1(m.p2):'?'}`
+      : `Cat. ${m.catLabel} — Grupo ${m.grupoId}: ${pJ1(m.p1)} vs ${pJ1(m.p2)}`;
     return{id:m.id,label};
   });
 
   html+=`<div class="sched-grid">`;
   allMatches.forEach(m=>{
     const sched=getSched(m.id);
-    const label=m.isPlayoff?`${m.roundName}`:`Grupo ${m.grupoId}`;
+    const label=m.isPlayoff?`Cat. ${m.catLabel} — ${m.roundName}`:`Cat. ${m.catLabel} — Grupo ${m.grupoId}`;
     const n1=m.p1?(pJ1(m.p1)+' / '+pJ2(m.p1)):'Por definir';
     const n2=m.p2?(pJ1(m.p2)+' / '+pJ2(m.p2)):'Por definir';
     const otherOpts=allMatchOptions
@@ -862,12 +878,16 @@ async function saveSchedGeneric(mId){
   await saveSchedToDB(mId);
   renderJContent();showToast('Horario guardado');
 }
+// IMPORTANTE: el checkbox refleja su nuevo estado de inmediato (this.checked),
+// y recién después de guardar y volver a renderizar queda consistente con la base.
 async function toggleAfter(mId){
+  const checkboxEl=document.getElementById(`after_${mId}`);
+  const checked=checkboxEl.checked; // ya tiene el valor actualizado por el click del usuario
   const cur=getSched(mId);
-  const checked=document.getElementById(`after_${mId}`).checked;
   matchSchedule[mId]={...cur,after:checked,hora:checked?'':cur.hora,afterMatchId:checked?cur.afterMatchId:''};
   await saveSchedToDB(mId);
-  renderA();renderJContent();
+  renderA();
+  renderJContent();
 }
 async function saveAfterMatch(mId){
   const cur=getSched(mId);
