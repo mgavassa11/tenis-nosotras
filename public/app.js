@@ -364,7 +364,18 @@ function renderPublicView(cat,subTab,targetElId){
           .filter(m=>m.p1&&m.p2&&(!m.sets||!m.sets.length))
           .map(m=>({...m,grupoId:r.name,isPlayoff:true})))
       : [];
-    const pend=[...pendPlayoff,...pendGrupos];
+    let pend=[...pendPlayoff,...pendGrupos];
+    // Orden por horario: los que tienen hora fija van primero (de más
+    // temprano a más tarde), los "a continuación de" después, y los que
+    // todavía no tienen ningún dato cargado quedan al final.
+    pend.sort((a,b)=>{
+      const sa=getSched(a.id),sb=getSched(b.id);
+      const rank=s=> s.hora ? 0 : (s.after ? 1 : 2);
+      const ra=rank(sa),rb=rank(sb);
+      if(ra!==rb)return ra-rb;
+      if(ra===0)return sa.hora.localeCompare(sb.hora);
+      return 0;
+    });
     html+=`<div class="phase-label">Próximos partidos</div>`;
     if(!pend.length){html+='<div class="empty">No hay partidos pendientes.</div>';}
     else{pend.forEach(m=>{html+=renderPCard(m);});}
@@ -809,10 +820,16 @@ async function regenerateMatchesForGroup(cat,gid){
 // CANCHAS Y HORARIOS — ahora muestra TODAS las categorías juntas
 // ====================================================
 function renderSectionSched(){
-  // Reunir partidos pendientes de grupos de las 3 categorías
+  // Reunir partidos pendientes de grupos de las 3 categorías,
+  // ordenados primero por categoría (1era, 2da, 3era) y dentro de
+  // cada categoría por grupo (A, B, C...). Los partidos de playoff
+  // quedan al final de cada categoría, ordenados por ronda.
   let allMatches=[];
   ["1era","2da","3era"].forEach(cat=>{
-    const groupMatches=partidos.filter(m=>m.cat===cat&&!m.played).map(m=>({...m,catLabel:CAT_LABELS[cat]}));
+    const groupMatches=partidos
+      .filter(m=>m.cat===cat&&!m.played)
+      .map(m=>({...m,catLabel:CAT_LABELS[cat]}))
+      .sort((a,b)=>a.grupoId.localeCompare(b.grupoId));
     allMatches=allMatches.concat(groupMatches);
     if(playoffData[cat]){
       const poMatches=playoffData[cat].rounds.flatMap(r=>
