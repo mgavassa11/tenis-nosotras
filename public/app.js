@@ -966,8 +966,9 @@ async function saveAfterMatch(mId){
 }
 
 function renderSectionResults(cat){
-  const pend=partidos.filter(m=>m.cat===cat&&!m.played&&m.phase==='grupos');
-  const done=partidos.filter(m=>m.cat===cat&&m.played&&m.phase==='grupos');
+  const byGroup=(a,b)=>a.grupoId.localeCompare(b.grupoId);
+  const pend=partidos.filter(m=>m.cat===cat&&!m.played&&m.phase==='grupos').sort(byGroup);
+  const done=partidos.filter(m=>m.cat===cat&&m.played&&m.phase==='grupos').sort(byGroup);
   const hasSim=partidos.some(m=>m.cat===cat&&m.simulated);
   let html=`<div class="ibar">Anotá el resultado del set único (o games, ej: 6-4, 4-2). Supertiebreak: 1-0.</div>`;
   html+=`<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
