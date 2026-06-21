@@ -53,6 +53,8 @@ const state={
   adminSection:"pairs",
   adminPairsGroup:{},
   adminUnlocked:false,
+  proximosFilter:"horario", // "horario" | "alfabetico" | "buscar"
+  proximosBuscarNombre:"",
 };
 ["1era","2da","3era"].forEach(c=>{state.adminPairsGroup[c]=null;});
 
@@ -294,6 +296,7 @@ function switchMain(v){
 function renderMainTabs(){
   document.getElementById('app').innerHTML=`
     <div class="header">
+      <div class="header-credit">Cuadro del torneo<br>hecho por @marcosgavassaa</div>
       <h1>🎾 Tenis y Nosotras × club24</h1>
       <p>Torneo Americano de Damas — 26 de Junio · Los Cardales Country Club</p>
     </div>
@@ -401,8 +404,56 @@ function renderPublicView(cat,subTab,targetElId){
       return 0;
     });
     html+=`<div class="phase-label">Próximos partidos</div>`;
-    if(!pend.length){html+='<div class="empty">No hay partidos pendientes.</div>';}
-    else{pend.forEach(m=>{html+=renderPCard(m);});}
+    html+=`<div class="toggle-group" style="margin-bottom:14px;">
+      <button class="toggle-btn ${state.proximosFilter==='horario'?'active':''}" onclick="setProximosFilter('horario')">Por horario</button>
+      <button class="toggle-btn ${state.proximosFilter==='alfabetico'?'active':''}" onclick="setProximosFilter('alfabetico')">Por jugadora (A-Z)</button>
+      <button class="toggle-btn ${state.proximosFilter==='buscar'?'active':''}" onclick="setProximosFilter('buscar')">Buscar jugadora</button>
+    </div>`;
+
+    if(state.proximosFilter==='buscar'){
+      // Lista única de jugadoras de esta categoría (sin duplicar nombres
+      // repetidos) para elegir en el selector.
+      const nombresSet=new Set();
+      grupos[cat].forEach(g=>g.parejas.forEach(p=>{nombresSet.add(p.j1);nombresSet.add(p.j2);}));
+      const nombres=[...nombresSet].sort((a,b)=>a.localeCompare(b,'es',{sensitivity:'base'}));
+      const selected=state.proximosBuscarNombre||'';
+      html+=`<select id="proximosBuscarSelect" onchange="setProximosBuscarNombre(this.value)" style="margin-bottom:14px;">
+        <option value="">— Elegí una jugadora —</option>
+        ${nombres.map(n=>`<option value="${n}" ${n===selected?'selected':''}>${n}</option>`).join('')}
+      </select>`;
+    }
+
+    if(!pend.length){
+      html+='<div class="empty">No hay partidos pendientes.</div>';
+    }else if(state.proximosFilter==='alfabetico'){
+      // Lista de jugadoras individuales (no parejas) de esta categoría,
+      // cada una con el partido pendiente al que pertenece.
+      const entries=[];
+      pend.forEach(m=>{
+        const p1=getP(m.p1),p2=getP(m.p2);
+        if(p1){entries.push({nombre:p1.j1,match:m});entries.push({nombre:p1.j2,match:m});}
+        if(p2){entries.push({nombre:p2.j1,match:m});entries.push({nombre:p2.j2,match:m});}
+      });
+      entries.sort((a,b)=>a.nombre.localeCompare(b.nombre,'es',{sensitivity:'base'}));
+      entries.forEach(e=>{html+=renderJugadoraEntry(e.nombre,e.match);});
+    }else if(state.proximosFilter==='buscar'){
+      const nombre=state.proximosBuscarNombre;
+      if(!nombre){
+        html+='<div class="empty">Elegí una jugadora para ver únicamente sus próximos partidos.</div>';
+      }else{
+        const propios=pend.filter(m=>{
+          const p1=getP(m.p1),p2=getP(m.p2);
+          return (p1&&(p1.j1===nombre||p1.j2===nombre))||(p2&&(p2.j1===nombre||p2.j2===nombre));
+        });
+        if(!propios.length){
+          html+=`<div class="empty">${nombre} no tiene partidos pendientes.</div>`;
+        }else{
+          propios.forEach(m=>{html+=renderJugadoraEntry(nombre,m);});
+        }
+      }
+    }else{
+      pend.forEach(m=>{html+=renderPCard(m);});
+    }
     el.innerHTML=html;
     return;
   }
@@ -584,6 +635,61 @@ function renderPCard(m){
       </div>
       ${schedHtml}
       <span class="pst ${m.played?'splay':'spend'}">${m.played?'Jugado':'Pendiente'}</span>
+    </div>
+  </div>`;
+}
+
+function setProximosFilter(f){
+  state.proximosFilter=f;
+  // Re-renderiza la vista correcta según dónde estemos parados
+  // (vista pública de Jugadoras o Live dentro del panel de admin).
+  if(state.mainView==='admin'&&state.adminSection==='live'){
+    renderPublicView(state.liveCat,state.liveSubTab,'liveContent');
+  }else{
+    renderJContent();
+  }
+}
+function setProximosBuscarNombre(nombre){
+  state.proximosBuscarNombre=nombre;
+  if(state.mainView==='admin'&&state.adminSection==='live'){
+    renderPublicView(state.liveCat,state.liveSubTab,'liveContent');
+  }else{
+    renderJContent();
+  }
+}
+
+// Tarjeta compacta para el filtro "Por jugadora (A-Z)": encabezada por el
+// nombre de la jugadora individual, mostrando contra quién juega y los
+// mismos datos de cancha/hora que la tarjeta de partido normal.
+function renderJugadoraEntry(nombre,m){
+  const rival1=getP(m.p1),rival2=getP(m.p2);
+  const esP1=rival1&&(rival1.j1===nombre||rival1.j2===nombre);
+  const companera=esP1?(rival1.j1===nombre?rival1.j2:rival1.j1):(rival2?.j1===nombre?rival2.j2:rival2?.j1);
+  const rivalPareja=esP1?rival2:rival1;
+  const rivalTxt=rivalPareja?`${rivalPareja.j1} / ${rivalPareja.j2}`:'Por definir';
+  const sched=getSched(m.id);
+  let schedHtml='';
+  if(sched.after||sched.cancha||sched.hora){
+    const disp=getSchedDisplay(sched);
+    let canchaText=sched.cancha?`C${sched.cancha}`:'—';
+    schedHtml=`<div class="cancha-block">
+      <div class="cnum">${canchaText}</div>
+      <div class="clabel">Cancha</div>
+      <div class="ctime" style="font-size:${sched.after?'11px':'14px'};">${disp.short}</div>
+      ${sched.after&&disp.waitNames?`<div class="after-note">${disp.waitNames}</div>`:''}
+    </div>`;
+  }
+  const labelText=m.isPlayoff?m.grupoId:`Grupo ${m.grupoId}`;
+  return `<div class="partido">
+    <div class="phdr"><span>${labelText}</span></div>
+    <div class="pbody">
+      <div class="pbody-teams">
+        <div class="trow"><span class="tname win">${nombre}</span></div>
+        <div class="trow" style="margin-top:2px;"><span class="tname" style="font-size:12px;color:var(--gray);">junto a ${companera||'?'}</span></div>
+        <div class="trow" style="margin-top:6px;"><span class="tname" style="font-size:13px;color:var(--gray-light);">vs ${rivalTxt}</span></div>
+      </div>
+      ${schedHtml}
+      <span class="pst spend">Pendiente</span>
     </div>
   </div>`;
 }
