@@ -32,7 +32,7 @@ const GRUPOS_INICIALES = {
 ]
 };
 
-const TB_LABELS={pts:'Puntos',bal:'Balance de games',gg:'Games ganados',h2h:'Enfrentamiento directo'};
+const TB_LABELS={pts:'Puntos',bal:'Diferencia de games',gg:'Games ganados',h2h:'Enfrentamiento directo'};
 const CAT_LABELS={"1era":"1era","2da":"2da","3era":"3era"};
 
 // ---- ESTADO GLOBAL (se llena leyendo de Supabase) ----
@@ -42,6 +42,7 @@ let matchSchedule={};
 let playoffData={"1era":null,"2da":null,"3era":null};
 let playoffMode={"1era":"semis","2da":"cuartos","3era":"cuartos"};
 let tiebreakOrder=["pts","bal","gg","h2h"];
+let reglamentoText="";
 
 const state={
   mainView:"jugadoras",
@@ -177,6 +178,7 @@ async function loadAllData(){
   (configRows||[]).forEach(row=>{
     if(row.clave==='playoff_mode') playoffMode={...playoffMode,...row.valor};
     if(row.clave==='tiebreak_order') tiebreakOrder=row.valor;
+    if(row.clave==='reglamento') reglamentoText=row.valor||'';
   });
 
   ["1era","2da","3era"].forEach(c=>{
@@ -346,6 +348,8 @@ function renderJ(){
   document.getElementById('stj').innerHTML=`
     <button class="pill-sm ${state.subTabJ==='grupos'?'active':''}" onclick="switchSubJ('grupos')">Grupos</button>
     <button class="pill-sm ${state.subTabJ==='proximos'?'active':''}" onclick="switchSubJ('proximos')">Próximos partidos</button>
+    <button class="pill-sm ${state.subTabJ==='reglamento'?'active':''}" onclick="switchSubJ('reglamento')">Reglamento</button>
+    <button class="pill-sm ${state.subTabJ==='direcciones'?'active':''}" onclick="switchSubJ('direcciones')">Direcciones</button>
   `;
   renderJContent();
 }
@@ -357,6 +361,26 @@ function renderPublicView(cat,subTab,targetElId){
   const el=document.getElementById(targetElId);
   if(!el)return;
   let html='';
+
+  if(subTab==='reglamento'){
+    html+=`<div class="phase-label">Reglamento del torneo</div>`;
+    html+=`<div class="reglamento-card">${renderReglamentoHtml(reglamentoText)}</div>`;
+    el.innerHTML=html;
+    return;
+  }
+
+  if(subTab==='direcciones'){
+    html+=`<div class="phase-label">Cómo llegar</div>`;
+    html+=`<a href="https://maps.app.goo.gl/xM1vZvBGgTdRXCtk8" target="_blank" rel="noopener noreferrer" class="btn btn-pink btn-full" style="margin-bottom:1.2rem;text-decoration:none;">📍 Cómo llegar a Cardales</a>`;
+    html+=`<div class="map-card">
+      <img src="https://i.imgur.com/oZa8l6u.jpeg" alt="Mapa de acceso a las canchas" class="map-img">
+      <div class="map-caption"><span class="map-dash">- - - -</span> dirección a canchas 11-20 caminando</div>
+      <div class="map-caption"><span class="map-line">━━━━━</span> dirección a canchas 11-20 en auto</div>
+    </div>`;
+    el.innerHTML=html;
+    return;
+  }
+
   if(subTab==='proximos'){
     const pendGrupos=partidos.filter(m=>m.cat===cat&&!m.played);
     const pendPlayoff=playoffData[cat]
@@ -428,7 +452,7 @@ function renderPublicView(cat,subTab,targetElId){
     html+=`<div class="grupo">
       <div class="grupo-header">Grupo ${g.id} · ${g.parejas.length} parejas</div>
       <div class="table-scroll"><table class="grupo-table">
-        <thead><tr><th style="width:26px">#</th><th class="thl">Pareja</th><th>Pts</th><th>G</th><th>P</th><th>GG</th><th>GP</th><th>Bal</th></tr></thead>
+        <thead><tr><th style="width:26px">#</th><th class="thl">Pareja</th><th>Pts</th><th>G</th><th>P</th><th>GG</th><th>GP</th><th>Dif</th></tr></thead>
         <tbody>`;
     stats.forEach((p,i)=>{
       const shade=i%2===1,isCut=i===cut-1;
@@ -440,14 +464,9 @@ function renderPublicView(cat,subTab,targetElId){
       </tr>`;
     });
     html+=`</tbody></table></div>`;
-    let note=`🎾 1ro clasifica directo a semifinales.`;
-    if(cat==="1era"){
-      note+=` Los segundos clasificarán a cuartos de final únicamente si el formato del playoff se amplía a esa instancia, según los mejores resultados de la fase de grupos.`;
-    }else{
-      note=`🎾 1ro clasifica directo. 2do compite por los mejores segundos para ${playoffMode[cat]}.`;
-    }
+    const note=`🎾 1ro clasifica directo. 2do compite por los mejores segundos para ${playoffMode[cat]}.`;
     html+=`<div class="cnote">${note}</div>
-      <div class="legend-bar"><strong>Pts</strong>: puntos (3 x victoria) &nbsp;·&nbsp; <strong>G</strong>: ganados &nbsp;·&nbsp; <strong>P</strong>: perdidos &nbsp;·&nbsp; <strong>GG</strong>: games ganados &nbsp;·&nbsp; <strong>GP</strong>: games perdidos &nbsp;·&nbsp; <strong>Bal</strong>: diferencia de games (GG-GP)</div>
+      <div class="legend-bar"><strong>Pts</strong>: puntos (3 x victoria) &nbsp;·&nbsp; <strong>G</strong>: ganados &nbsp;·&nbsp; <strong>P</strong>: perdidos &nbsp;·&nbsp; <strong>GG</strong>: games ganados &nbsp;·&nbsp; <strong>GP</strong>: games perdidos &nbsp;·&nbsp; <strong>Dif</strong>: diferencia de games (GG-GP)</div>
       ${tiebreakLegendHtml()}
     </div>`;
     html+=renderMatrixTable(g,cat);
@@ -459,7 +478,7 @@ function renderPublicView(cat,subTab,targetElId){
       html+=`<div class="phase-label" style="margin-top:1.5rem;">Ranking mejores 2dos</div>`;
       html+=`<div class="grupo"><div class="grupo-header">Ranking 2dos puestos</div>
         <div class="table-scroll"><table class="grupo-table">
-          <thead><tr><th>#</th><th class="thl">Pareja</th><th>Grupo</th><th>Pts</th><th>GG</th><th>GP</th><th>Bal</th></tr></thead><tbody>`;
+          <thead><tr><th>#</th><th class="thl">Pareja</th><th>Grupo</th><th>Pts</th><th>GG</th><th>GP</th><th>Dif</th></tr></thead><tbody>`;
       seconds.forEach((s,i)=>{
         const shade=i%2===1,cl=i<needed,isCut=i===needed-1&&needed<seconds.length;
         html+=`<tr class="${shade?'shade':''} ${isCut?'cut-row':''}">
@@ -473,7 +492,7 @@ function renderPublicView(cat,subTab,targetElId){
         <div class="legend-bar">
           <strong>Cómo se rompe el empate entre segundos:</strong><br>
           1° criterio: más <strong>Pts</strong> (puntos obtenidos en su grupo).<br>
-          2° criterio (si persiste el empate en puntos): mejor <strong>Bal</strong> (diferencia de games ganados menos perdidos).<br>
+          2° criterio (si persiste el empate en puntos): mejor <strong>Dif</strong> (diferencia de games ganados menos perdidos).<br>
           3° criterio (si persiste el empate en balance): más <strong>GG</strong> (total de games ganados).<br>
           En grupos de 5 parejas, las estadísticas del 2do se calculan excluyendo el partido contra la última pareja del grupo, para comparar en igualdad de partidos jugados con los segundos de grupos de 4.
         </div>
@@ -642,6 +661,7 @@ function renderA(){
     <button class="pill-sm ${state.adminSection==='results'?'active':''}" onclick="switchAdminSection('results')">Resultados</button>
     <button class="pill-sm ${state.adminSection==='playoff'?'active':''}" onclick="switchAdminSection('playoff')">Playoff</button>
     <button class="pill-sm ${state.adminSection==='tiebreak'?'active':''}" onclick="switchAdminSection('tiebreak')">Desempate</button>
+    <button class="pill-sm ${state.adminSection==='reglamento'?'active':''}" onclick="switchAdminSection('reglamento')">Reglamento</button>
   `;
   renderAContent();
 }
@@ -663,6 +683,8 @@ function renderAContent(){
     document.getElementById('liveSubBar').innerHTML=`
       <button class="pill-sm ${state.liveSubTab==='grupos'?'active':''}" onclick="switchLiveSub('grupos')">Grupos</button>
       <button class="pill-sm ${state.liveSubTab==='proximos'?'active':''}" onclick="switchLiveSub('proximos')">Próximos partidos</button>
+      <button class="pill-sm ${state.liveSubTab==='reglamento'?'active':''}" onclick="switchLiveSub('reglamento')">Reglamento</button>
+      <button class="pill-sm ${state.liveSubTab==='direcciones'?'active':''}" onclick="switchLiveSub('direcciones')">Direcciones</button>
     `;
     renderPublicView(state.liveCat,state.liveSubTab,'liveContent');
     return;
@@ -672,6 +694,7 @@ function renderAContent(){
   else if(state.adminSection==='results') html=renderSectionResults(cat);
   else if(state.adminSection==='playoff') html=renderSectionPlayoff(cat);
   else if(state.adminSection==='tiebreak') html=renderSectionTiebreak();
+  else if(state.adminSection==='reglamento') html=renderSectionReglamento();
   document.getElementById('acontent').innerHTML=html;
 }
 function switchLiveCat(c){state.liveCat=c;renderA();}
@@ -693,7 +716,7 @@ function renderSectionTiebreak(){
   html+=`</div>`;
   html+=`<div class="legend-bar">
     <strong>Puntos:</strong> total de puntos obtenidos en el grupo (3 por victoria).<br>
-    <strong>Balance de games:</strong> diferencia entre games ganados y perdidos.<br>
+    <strong>Diferencia de games:</strong> diferencia entre games ganados y perdidos.<br>
     <strong>Games ganados:</strong> total de games ganados en el grupo.<br>
     <strong>Enfrentamiento directo:</strong> resultado del partido jugado entre las parejas empatadas.
   </div>`;
@@ -705,6 +728,49 @@ async function moveTiebreak(idx,dir){
   [tiebreakOrder[idx],tiebreakOrder[newIdx]]=[tiebreakOrder[newIdx],tiebreakOrder[idx]];
   await supabaseClient.from('configuracion').upsert({clave:'tiebreak_order',valor:tiebreakOrder});
   renderA();renderJContent();showToast('Orden de desempate actualizado');
+}
+
+// ====================================================
+// REGLAMENTO
+// ====================================================
+function renderSectionReglamento(){
+  return `<div class="ibar">Escribí acá el reglamento del torneo. Para hacer una lista con viñetas, empezá cada línea con un guión "-" o un asterisco "*". Los cambios se ven reflejados para todas las jugadoras apenas guardás.</div>
+    <textarea id="reglamentoInput" rows="16" style="width:100%;padding:12px;border:1.5px solid #ccc;border-radius:10px;font-family:inherit;font-size:14px;line-height:1.6;resize:vertical;" placeholder="Ejemplo:
+- Los partidos se juegan a 1 set / 4-5 games.
+- En caso de empate se define con supertiebreak a 10 puntos.
+- Las jugadoras deben presentarse 10 minutos antes del horario asignado.">${reglamentoText}</textarea>
+    <button class="btn btn-pink btn-sm" style="margin-top:10px;" onclick="saveReglamento()">Guardar reglamento</button>`;
+}
+async function saveReglamento(){
+  const val=document.getElementById('reglamentoInput').value;
+  reglamentoText=val;
+  await supabaseClient.from('configuracion').upsert({clave:'reglamento',valor:val});
+  showToast('Reglamento guardado ✓');
+}
+
+// Convierte texto plano con líneas "- algo" o "* algo" en bullets prolijos,
+// y deja las líneas normales como párrafos. Lo usamos tanto en la vista de
+// jugadoras como en el panel de admin (modo solo lectura) para el reglamento.
+function renderReglamentoHtml(text){
+  if(!text||!text.trim()){
+    return '<div class="empty">El administrador todavía no cargó el reglamento.</div>';
+  }
+  const lines=text.split('\n');
+  let html='';
+  let inList=false;
+  lines.forEach(line=>{
+    const trimmed=line.trim();
+    const isBullet=/^[-*]\s+/.test(trimmed);
+    if(isBullet){
+      if(!inList){html+='<ul class="reglamento-list">';inList=true;}
+      html+=`<li>${trimmed.replace(/^[-*]\s+/,'')}</li>`;
+    }else{
+      if(inList){html+='</ul>';inList=false;}
+      if(trimmed){html+=`<p class="reglamento-p">${trimmed}</p>`;}
+    }
+  });
+  if(inList)html+='</ul>';
+  return html;
 }
 
 function renderSectionPairs(cat){
