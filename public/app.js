@@ -53,7 +53,7 @@ const state={
   adminSection:"pairs",
   adminPairsGroup:{},
   adminUnlocked:false,
-  proximosFilter:"horario", // "horario" | "alfabetico" | "buscar"
+  proximosFilter:"horario", // "horario" | "buscar"
   proximosBuscarNombre:"",
 };
 ["1era","2da","3era"].forEach(c=>{state.adminPairsGroup[c]=null;});
@@ -296,7 +296,7 @@ function switchMain(v){
 function renderMainTabs(){
   document.getElementById('app').innerHTML=`
     <div class="header">
-      <div class="header-credit">Cuadro del torneo<br>hecho por @marcosgavassaa</div>
+      <div class="header-credit">Cuadro del torneo<br>by @marcosgavassaa</div>
       <h1>🎾 Tenis y Nosotras × club24</h1>
       <p>Torneo Americano de Damas — 26 de Junio · Los Cardales Country Club</p>
     </div>
@@ -406,7 +406,6 @@ function renderPublicView(cat,subTab,targetElId){
     html+=`<div class="phase-label">Próximos partidos</div>`;
     html+=`<div class="toggle-group" style="margin-bottom:14px;">
       <button class="toggle-btn ${state.proximosFilter==='horario'?'active':''}" onclick="setProximosFilter('horario')">Por horario</button>
-      <button class="toggle-btn ${state.proximosFilter==='alfabetico'?'active':''}" onclick="setProximosFilter('alfabetico')">Por jugadora (A-Z)</button>
       <button class="toggle-btn ${state.proximosFilter==='buscar'?'active':''}" onclick="setProximosFilter('buscar')">Buscar jugadora</button>
     </div>`;
 
@@ -425,17 +424,6 @@ function renderPublicView(cat,subTab,targetElId){
 
     if(!pend.length){
       html+='<div class="empty">No hay partidos pendientes.</div>';
-    }else if(state.proximosFilter==='alfabetico'){
-      // Lista de jugadoras individuales (no parejas) de esta categoría,
-      // cada una con el partido pendiente al que pertenece.
-      const entries=[];
-      pend.forEach(m=>{
-        const p1=getP(m.p1),p2=getP(m.p2);
-        if(p1){entries.push({nombre:p1.j1,match:m});entries.push({nombre:p1.j2,match:m});}
-        if(p2){entries.push({nombre:p2.j1,match:m});entries.push({nombre:p2.j2,match:m});}
-      });
-      entries.sort((a,b)=>a.nombre.localeCompare(b.nombre,'es',{sensitivity:'base'}));
-      entries.forEach(e=>{html+=renderJugadoraEntry(e.nombre,e.match);});
     }else if(state.proximosFilter==='buscar'){
       const nombre=state.proximosBuscarNombre;
       if(!nombre){
