@@ -373,7 +373,7 @@ function renderPublicView(cat,subTab,targetElId){
     html+=`<div class="phase-label">Cómo llegar</div>`;
     html+=`<a href="https://maps.app.goo.gl/xM1vZvBGgTdRXCtk8" target="_blank" rel="noopener noreferrer" class="btn btn-pink btn-full" style="margin-bottom:1.2rem;text-decoration:none;">📍 Cómo llegar a Cardales</a>`;
     html+=`<div class="map-card">
-      <img src="https://i.imgur.com/oZa8l6u.jpeg" alt="Mapa de acceso a las canchas" class="map-img">
+      <img src="https://i.imgur.com/966dTmZ.jpeg" alt="Mapa de acceso a las canchas" class="map-img">
       <div class="map-caption"><span class="map-dash">- - - -</span> dirección a canchas 11-20 caminando</div>
       <div class="map-caption"><span class="map-line">━━━━━</span> dirección a canchas 11-20 en auto</div>
     </div>`;
