@@ -1095,13 +1095,19 @@ async function saveSchedToDB(mId){
 }
 
 function findScheduleConflict(mId,cancha,hora){
+  // Normaliza a string para comparar sin importar si Supabase devolvió número o string
   if(!cancha||!hora)return null;
+  const cStr=String(cancha).trim();
+  const hStr=String(hora).trim();
   const allMatchIds=Object.keys(matchSchedule);
   for(const otherId of allMatchIds){
     if(otherId===mId)continue;
     const other=matchSchedule[otherId];
-    if(!other||other.after)continue;
-    if(other.cancha===cancha && other.hora===hora){
+    if(!other||other.after)return null; // si el otro es "a continuación" no tiene hora fija
+    const otherC=String(other.cancha||'').trim();
+    const otherH=String(other.hora||'').trim();
+    if(!otherC||!otherH)continue; // el otro no tiene datos completos, no hay conflicto
+    if(otherC===cStr && otherH===hStr){
       const m=findMatchById(otherId);
       return m||{id:otherId};
     }
@@ -1110,23 +1116,28 @@ function findScheduleConflict(mId,cancha,hora){
 }
 
 async function saveSchedGeneric(mId){
+  // Leemos AMBOS campos del DOM juntos para tener el estado actual completo
   const c=document.getElementById(`cancha_${mId}`)?.value||'';
   const h=document.getElementById(`hora_${mId}`)?.value||'';
+
+  // Actualizamos en memoria PRIMERO (así el partido que se está editando
+  // ya tiene su nuevo valor antes de que findScheduleConflict lo excluya)
+  const cur=getSched(mId);
+  matchSchedule[mId]={...cur,cancha:c,hora:h};
 
   const conflict=findScheduleConflict(mId,c,h);
   if(conflict){
     const n1=conflict.p1?pNombre(conflict.p1):'?',n2=conflict.p2?pNombre(conflict.p2):'?';
     showToast(`⚠️ Cancha ${c} a las ${h} ya está asignada a: ${n1} vs ${n2}`);
-    const prev=getSched(mId);
+    // Revertimos en memoria al valor anterior
+    matchSchedule[mId]={...cur};
     const cInput=document.getElementById(`cancha_${mId}`);
     const hInput=document.getElementById(`hora_${mId}`);
-    if(cInput)cInput.value=prev.cancha||'';
-    if(hInput)hInput.value=prev.hora||'';
+    if(cInput)cInput.value=cur.cancha||'';
+    if(hInput)hInput.value=cur.hora||'';
     return;
   }
 
-  const cur=getSched(mId);
-  matchSchedule[mId]={...cur,cancha:c,hora:h};
   await saveSchedToDB(mId);
   renderJContent();showToast('Horario guardado');
 }
