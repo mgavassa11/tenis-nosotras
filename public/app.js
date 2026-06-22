@@ -1103,13 +1103,21 @@ function findScheduleConflict(mId,cancha,hora){
   for(const otherId of allMatchIds){
     if(otherId===mId)continue;
     const other=matchSchedule[otherId];
-    if(!other||other.after)return null; // si el otro es "a continuación" no tiene hora fija
+    // Si el otro no existe, es "a continuación" o no tiene cancha+hora completos → salteamos
+    if(!other||other.after)continue;
     const otherC=String(other.cancha||'').trim();
     const otherH=String(other.hora||'').trim();
-    if(!otherC||!otherH)continue; // el otro no tiene datos completos, no hay conflicto
-    if(otherC===cStr && otherH===hStr){
+    if(!otherC||!otherH)continue;
+    if(otherC===cStr&&otherH===hStr){
+      // Solo reportar conflicto si el partido que ocupa ese slot todavía existe
+      // y todavía está pendiente (no fue jugado ni eliminado)
       const m=findMatchById(otherId);
-      return m||{id:otherId};
+      if(!m)continue; // el partido ya no existe, ignoramos el slot
+      const isStillPending=partidos.find(p=>p.id===otherId&&!p.played)||
+        ["1era","2da","3era"].some(cat=>playoffData[cat]&&
+          playoffData[cat].rounds.some(r=>r.matches.some(pm=>pm.id===otherId)));
+      if(!isStillPending)continue; // el partido ya fue jugado, el slot está libre
+      return m;
     }
   }
   return null;
