@@ -815,10 +815,13 @@ async function moveTiebreak(idx,dir){
 // ====================================================
 function renderSectionReglamento(){
   return `<div class="ibar">Escribí el reglamento del torneo. Formato disponible:<br>
-    &bull; Línea con <strong>-</strong> al inicio → bullet rosa<br>
+    &bull; <strong>-</strong> al inicio de línea → bullet rosa<br>
     &bull; <strong>**texto**</strong> → <strong>negrita</strong><br>
+    &bull; <strong>_texto_</strong> → <em>cursiva</em><br>
     &bull; <strong>__texto__</strong> → <u>subrayado</u><br>
-    &bull; Dos líneas en blanco entre párrafos → espacio visible entre ellos</div>
+    &bull; <strong>**_texto_**</strong> → <strong><em>negrita cursiva</em></strong> &nbsp;|&nbsp; <strong>**__texto__**</strong> → <strong><u>negrita subrayado</u></strong><br>
+    &bull; <strong>**___texto___**</strong> → <strong><em><u>negrita cursiva subrayado</u></em></strong><br>
+    &bull; 1 línea en blanco → espacio simple &nbsp;|&nbsp; 2+ líneas → espacio de sección</div>
     <textarea id="reglamentoInput" rows="16" style="width:100%;padding:12px;border:1.5px solid #ccc;border-radius:10px;font-family:inherit;font-size:14px;line-height:1.6;resize:vertical;" placeholder="Ejemplo:
 - Los partidos se juegan a 1 set / 4-5 games.
 - En caso de empate se define con supertiebreak a 10 puntos.
@@ -836,25 +839,40 @@ async function saveReglamento(){
 
 // Convierte el texto del reglamento a HTML:
 // - Líneas con "- " o "* " al inicio → bullets rosas
-// - **texto** → negrita
-// - __texto__ → subrayado
-// - Dos líneas en blanco seguidas → espacio visible entre bloques
+// - **texto** → negrita | _texto_ → cursiva | __texto__ → subrayado
+// - Combinaciones: **__texto__** / **_texto_** / **___texto___**
+// - 1 línea en blanco → espacio simple | 2+ líneas → espacio de sección
 function renderReglamentoHtml(text){
   if(!text||!text.trim()){
     return '<div class="empty">El administrador todavía no cargó el reglamento.</div>';
   }
 
-  // Aplica **negrita** y __subrayado__ dentro de una línea
   function applyInline(str){
-    return str
-      .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
-      .replace(/__(.+?)__/g,'<u>$1</u>');
+    // Negrita + cursiva + subrayado: **___texto___**
+    str=str.replace(/\*\*___(.+?)___\*\*/g,'<strong><em><u>$1</u></em></strong>');
+    str=str.replace(/___\*\*(.+?)\*\*___/g,'<strong><em><u>$1</u></em></strong>');
+    // Negrita + subrayado: **__texto__**
+    str=str.replace(/\*\*__(.+?)__\*\*/g,'<strong><u>$1</u></strong>');
+    str=str.replace(/__\*\*(.+?)\*\*__/g,'<strong><u>$1</u></strong>');
+    // Negrita + cursiva: **_texto_**
+    str=str.replace(/\*\*_([^_]+?)_\*\*/g,'<strong><em>$1</em></strong>');
+    str=str.replace(/_\*\*(.+?)\*\*_/g,'<strong><em>$1</em></strong>');
+    // Cursiva + subrayado: ___texto___
+    str=str.replace(/___(.+?)___/g,'<em><u>$1</u></em>');
+    // Negrita sola: **texto**
+    str=str.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+    // Subrayado solo: __texto__
+    str=str.replace(/__(.+?)__/g,'<u>$1</u>');
+    // Cursiva sola: _texto_
+    str=str.replace(/(?<![_])_([^_]+?)_(?![_])/g,'<em>$1</em>');
+    return str;
   }
 
   const lines=text.split('\n');
   let html='';
   let inList=false;
   let blankCount=0;
+  let spacerAdded=false;
 
   lines.forEach(line=>{
     const trimmed=line.trim();
@@ -862,22 +880,27 @@ function renderReglamentoHtml(text){
 
     if(trimmed===''){
       blankCount++;
-      // Dos o más líneas en blanco seguidas → espacio extra entre bloques
-      if(blankCount>=2){
-        if(inList){html+='</ul>';inList=false;}
-        html+='<div style="margin-bottom:.8rem;"></div>';
+      if(inList){html+='</ul>';inList=false;}
+      if(blankCount===1){
+        // 1 línea en blanco → espacio simple
+        html+='<div style="margin-bottom:.5rem;"></div>';
+      }else if(blankCount===2&&!spacerAdded){
+        // 2+ líneas en blanco → espacio extra de sección
+        html+='<div style="margin-bottom:.6rem;"></div>';
+        spacerAdded=true;
       }
       return;
     }
 
     blankCount=0;
+    spacerAdded=false;
 
     if(isBullet){
       if(!inList){html+='<ul class="reglamento-list">';inList=true;}
       html+=`<li>${applyInline(trimmed.replace(/^[-*]\s+/,''))}</li>`;
     }else{
       if(inList){html+='</ul>';inList=false;}
-      html+=`<p class="reglamento-p">${applyInline(trimmed)}</p>`;
+      html+=`<p class="reglamento-p" style="margin-bottom:0;">${applyInline(trimmed)}</p>`;
     }
   });
 
