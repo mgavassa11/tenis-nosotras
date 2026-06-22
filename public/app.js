@@ -53,7 +53,7 @@ const state={
   adminSection:"pairs",
   adminPairsGroup:{},
   adminUnlocked:false,
-  proximosFilter:"horario", // "horario" | "buscar"
+  proximosFilter:"horario",
   proximosBuscarNombre:"",
 };
 ["1era","2da","3era"].forEach(c=>{state.adminPairsGroup[c]=null;});
@@ -266,8 +266,6 @@ function getSeeds(cat){
   });
   firsts.sort((a,b)=>b.pts-a.pts||b.bal-a.bal||b.gg-a.gg);
   seconds.sort((a,b)=>b.pts-a.pts||b.bal-a.bal||b.gg-a.gg);
-  // El cuadro siempre enfrenta 1ro vs 2do, así que necesitamos la mitad de
-  // cupos para primeros y la otra mitad para segundos (los mejores de cada lista).
   const half=cfg.total/2;
   const qF=firsts.slice(0,half);
   const qS=seconds.slice(0,half);
@@ -344,7 +342,7 @@ function tiebreakLegendHtml(){
 }
 
 // ====================================================
-// VISTA JUGADORAS / LIVE (compartida)
+// VISTA JUGADORAS
 // ====================================================
 function renderJ(){
   buildCatTabs('ctj',state.cat,'switchCatJ');
@@ -392,9 +390,6 @@ function renderPublicView(cat,subTab,targetElId){
           .map(m=>({...m,grupoId:r.name,isPlayoff:true})))
       : [];
     let pend=[...pendPlayoff,...pendGrupos];
-    // Orden por horario: los que tienen hora fija van primero (de más
-    // temprano a más tarde), los "a continuación de" después, y los que
-    // todavía no tienen ningún dato cargado quedan al final.
     pend.sort((a,b)=>{
       const sa=getSched(a.id),sb=getSched(b.id);
       const rank=s=> s.hora ? 0 : (s.after ? 1 : 2);
@@ -410,8 +405,6 @@ function renderPublicView(cat,subTab,targetElId){
     </div>`;
 
     if(state.proximosFilter==='buscar'){
-      // Lista única de jugadoras de esta categoría (sin duplicar nombres
-      // repetidos) para elegir en el selector.
       const nombresSet=new Set();
       grupos[cat].forEach(g=>g.parejas.forEach(p=>{nombresSet.add(p.j1);nombresSet.add(p.j2);}));
       const nombres=[...nombresSet].sort((a,b)=>a.localeCompare(b,'es',{sensitivity:'base'}));
@@ -463,7 +456,6 @@ function renderPublicView(cat,subTab,targetElId){
     </div>`;
   }
 
-  // PLAYOFF ARRIBA, si ya fue creado
   if(playoffData[cat]){
     html+=`<div class="phase-label">Playoff</div>`;
     if(playoffData[cat].isPreview){
@@ -483,7 +475,6 @@ function renderPublicView(cat,subTab,targetElId){
     }
   }
 
-  // ZONA DE GRUPOS DEBAJO
   html+=`<div class="phase-label" style="margin-top:${playoffData[cat]?'1.8rem':'0'};">Zona de grupos</div>`;
   grupos[cat].forEach(g=>{
     const stats=getStats(g.id,cat);
@@ -629,8 +620,6 @@ function renderPCard(m){
 
 function setProximosFilter(f){
   state.proximosFilter=f;
-  // Re-renderiza la vista correcta según dónde estemos parados
-  // (vista pública de Jugadoras o Live dentro del panel de admin).
   if(state.mainView==='admin'&&state.adminSection==='live'){
     renderPublicView(state.liveCat,state.liveSubTab,'liveContent');
   }else{
@@ -646,9 +635,6 @@ function setProximosBuscarNombre(nombre){
   }
 }
 
-// Tarjeta compacta para el filtro "Por jugadora (A-Z)": encabezada por el
-// nombre de la jugadora individual, mostrando contra quién juega y los
-// mismos datos de cancha/hora que la tarjeta de partido normal.
 function renderJugadoraEntry(nombre,m){
   const rival1=getP(m.p1),rival2=getP(m.p2);
   const esP1=rival1&&(rival1.j1===nombre||rival1.j2===nombre);
@@ -828,13 +814,19 @@ async function moveTiebreak(idx,dir){
 // REGLAMENTO
 // ====================================================
 function renderSectionReglamento(){
-  return `<div class="ibar">Escribí acá el reglamento del torneo. Para hacer una lista con viñetas, empezá cada línea con un guión "-" o un asterisco "*". Los cambios se ven reflejados para todas las jugadoras apenas guardás.</div>
+  return `<div class="ibar">Escribí el reglamento del torneo. Formato disponible:<br>
+    &bull; Línea con <strong>-</strong> al inicio → bullet rosa<br>
+    &bull; <strong>**texto**</strong> → <strong>negrita</strong><br>
+    &bull; <strong>__texto__</strong> → <u>subrayado</u><br>
+    &bull; Dos líneas en blanco entre párrafos → espacio visible entre ellos</div>
     <textarea id="reglamentoInput" rows="16" style="width:100%;padding:12px;border:1.5px solid #ccc;border-radius:10px;font-family:inherit;font-size:14px;line-height:1.6;resize:vertical;" placeholder="Ejemplo:
 - Los partidos se juegan a 1 set / 4-5 games.
 - En caso de empate se define con supertiebreak a 10 puntos.
-- Las jugadoras deben presentarse 10 minutos antes del horario asignado.">${reglamentoText}</textarea>
+
+Las jugadoras deben presentarse 10 minutos antes.">${reglamentoText}</textarea>
     <button class="btn btn-pink btn-sm" style="margin-top:10px;" onclick="saveReglamento()">Guardar reglamento</button>`;
 }
+
 async function saveReglamento(){
   const val=document.getElementById('reglamentoInput').value;
   reglamentoText=val;
@@ -842,27 +834,53 @@ async function saveReglamento(){
   showToast('Reglamento guardado ✓');
 }
 
-// Convierte texto plano con líneas "- algo" o "* algo" en bullets prolijos,
-// y deja las líneas normales como párrafos. Lo usamos tanto en la vista de
-// jugadoras como en el panel de admin (modo solo lectura) para el reglamento.
+// Convierte el texto del reglamento a HTML:
+// - Líneas con "- " o "* " al inicio → bullets rosas
+// - **texto** → negrita
+// - __texto__ → subrayado
+// - Dos líneas en blanco seguidas → espacio visible entre bloques
 function renderReglamentoHtml(text){
   if(!text||!text.trim()){
     return '<div class="empty">El administrador todavía no cargó el reglamento.</div>';
   }
+
+  // Aplica **negrita** y __subrayado__ dentro de una línea
+  function applyInline(str){
+    return str
+      .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+      .replace(/__(.+?)__/g,'<u>$1</u>');
+  }
+
   const lines=text.split('\n');
   let html='';
   let inList=false;
+  let blankCount=0;
+
   lines.forEach(line=>{
     const trimmed=line.trim();
     const isBullet=/^[-*]\s+/.test(trimmed);
+
+    if(trimmed===''){
+      blankCount++;
+      // Dos o más líneas en blanco seguidas → espacio extra entre bloques
+      if(blankCount>=2){
+        if(inList){html+='</ul>';inList=false;}
+        html+='<div style="margin-bottom:.8rem;"></div>';
+      }
+      return;
+    }
+
+    blankCount=0;
+
     if(isBullet){
       if(!inList){html+='<ul class="reglamento-list">';inList=true;}
-      html+=`<li>${trimmed.replace(/^[-*]\s+/,'')}</li>`;
+      html+=`<li>${applyInline(trimmed.replace(/^[-*]\s+/,''))}</li>`;
     }else{
       if(inList){html+='</ul>';inList=false;}
-      if(trimmed){html+=`<p class="reglamento-p">${trimmed}</p>`;}
+      html+=`<p class="reglamento-p">${applyInline(trimmed)}</p>`;
     }
   });
+
   if(inList)html+='</ul>';
   return html;
 }
@@ -977,13 +995,9 @@ async function regenerateMatchesForGroup(cat,gid){
 }
 
 // ====================================================
-// CANCHAS Y HORARIOS — ahora muestra TODAS las categorías juntas
+// CANCHAS Y HORARIOS
 // ====================================================
 function renderSectionSched(){
-  // Reunir partidos pendientes de grupos de las 3 categorías,
-  // ordenados primero por categoría (1era, 2da, 3era) y dentro de
-  // cada categoría por grupo (A, B, C...). Los partidos de playoff
-  // quedan al final de cada categoría, ordenados por ronda.
   let allMatches=[];
   ["1era","2da","3era"].forEach(cat=>{
     const groupMatches=partidos
@@ -1057,17 +1071,13 @@ async function saveSchedToDB(mId){
   });
 }
 
-// Devuelve el partido (si existe) que ya tiene asignada la misma cancha + hora
-// que se está por guardar, excluyendo al propio partido que se está editando.
-// Solo compara contra partidos que también tengan cancha Y hora cargadas
-// (si falta alguno de los dos datos, no se considera conflicto).
 function findScheduleConflict(mId,cancha,hora){
-  if(!cancha||!hora)return null; // sin ambos datos no hay forma de chocar
+  if(!cancha||!hora)return null;
   const allMatchIds=Object.keys(matchSchedule);
   for(const otherId of allMatchIds){
     if(otherId===mId)continue;
     const other=matchSchedule[otherId];
-    if(!other||other.after)continue; // "a continuación de" no tiene hora fija, no choca
+    if(!other||other.after)continue;
     if(other.cancha===cancha && other.hora===hora){
       const m=findMatchById(otherId);
       return m||{id:otherId};
@@ -1084,8 +1094,6 @@ async function saveSchedGeneric(mId){
   if(conflict){
     const n1=conflict.p1?pNombre(conflict.p1):'?',n2=conflict.p2?pNombre(conflict.p2):'?';
     showToast(`⚠️ Cancha ${c} a las ${h} ya está asignada a: ${n1} vs ${n2}`);
-    // Revertimos los inputs al valor anterior guardado, para que no quede
-    // una asignación duplicada cargada en pantalla sin haberse guardado.
     const prev=getSched(mId);
     const cInput=document.getElementById(`cancha_${mId}`);
     const hInput=document.getElementById(`hora_${mId}`);
@@ -1099,10 +1107,6 @@ async function saveSchedGeneric(mId){
   await saveSchedToDB(mId);
   renderJContent();showToast('Horario guardado');
 }
-// El checkbox queda tildado al instante (estado del DOM tras el click del usuario).
-// Guardamos en memoria y en la base, y si algo falla avisamos por toast en vez
-// de fallar en silencio (lo cual antes podía dejar el checkbox desincronizado
-// al volver a renderizar).
 async function toggleAfter(mId){
   const checkboxEl=document.getElementById(`after_${mId}`);
   const checked=checkboxEl.checked;
@@ -1316,23 +1320,17 @@ async function setPlayoffMode(cat,mode){
   await supabaseClient.from('configuracion').upsert({clave:'playoff_mode',valor:playoffMode});
   renderA();
 }
-// Arma los cruces siempre 1ro vs 2do (nunca 1ro-vs-1ro ni 2do-vs-2do),
-// emparejando el mejor 1ro con el mejor 2do disponible que NO sea de su mismo grupo,
-// y así sucesivamente. Si el mejor 2do es del mismo grupo que el 1ro que le toca,
-// se intercambia con el siguiente 2do disponible que sí sea válido.
-function buildFirstVsSecondPairing(firsts, seconds){
+function buildFirstVsSecondPairing(firsts,seconds){
   const usedSeconds=new Array(seconds.length).fill(false);
-  const pairs=[]; // {first, second}
+  const pairs=[];
   firsts.forEach(f=>{
-    // Buscar el mejor 2do disponible que no sea de su mismo grupo
     let chosenIdx=-1;
     for(let i=0;i<seconds.length;i++){
       if(usedSeconds[i])continue;
-      if(seconds[i].grupoId===f.grupoId)continue; // evitar mismo grupo
+      if(seconds[i].grupoId===f.grupoId)continue;
       chosenIdx=i;
       break;
     }
-    // Si todos los disponibles son del mismo grupo (caso límite), tomar el mejor disponible igual
     if(chosenIdx===-1){
       for(let i=0;i<seconds.length;i++){
         if(!usedSeconds[i]){chosenIdx=i;break;}
@@ -1347,17 +1345,9 @@ function buildFirstVsSecondPairing(firsts, seconds){
   });
   return pairs;
 }
-
-// Distribuye los cruces (1ro vs 2do) en el cuadro de playoff respetando el
-// "seeding" clásico: el cruce del mejor 1ro va en una punta del cuadro, el del
-// 2do mejor 1ro en la otra punta, etc. — para que los mejores se encuentren
-// recién en semis/final, no en la primera ronda.
 function seedPositionsForBracket(n){
-  // n = cantidad de cruces de primera ronda (2 para semis, 4 para cuartos)
-  // Devuelve el orden de posiciones estándar de un bracket de single elimination
   if(n===2) return [0,1];
-  if(n===4) return [0,3,1,2]; // 1° arriba, 4° abajo del mismo lado, 2° y 3° del otro lado
-  // fallback genérico (no debería usarse con los formatos actuales: 4 u 8)
+  if(n===4) return [0,3,1,2];
   const arr=[0];
   let size=1;
   while(size<n){
@@ -1368,20 +1358,16 @@ function seedPositionsForBracket(n){
   }
   return arr.slice(0,n);
 }
-
 function buildRoundsForMode(cat,seedsData){
   const cfg=getPlayoffConfig(cat);
-  const{firsts,seconds}=seedsData; // ya ordenados por desempeño, sin recortar
-  const slotsNeeded=cfg.total/2; // cantidad de cruces 1ro-vs-2do en la primera ronda
-
+  const{firsts,seconds}=seedsData;
+  const slotsNeeded=cfg.total/2;
   const pairs=buildFirstVsSecondPairing(
     firsts.slice(0,slotsNeeded),
     seconds.slice(0,slotsNeeded)
   );
-
   const order=seedPositionsForBracket(slotsNeeded);
   const orderedPairs=order.map(i=>pairs[i]||{first:null,second:null});
-
   if(cfg.total===4){
     return[
       {name:'Semifinales',matches:[
