@@ -1027,40 +1027,105 @@ function renderSchedGrupos(){
 }
 
 // ---- Sub-tab PLAYOFF: partidos de playoff por categoría y ronda ----
+// Definición fija de las rondas y cruces de playoff por modo.
+// Usamos IDs fijos (po_1era_qf1, etc.) independientes del cuadro,
+// así los horarios se pueden cargar antes de que las parejas estén definidas.
+function getPlayoffSlots(cat){
+  const mode=playoffMode[cat];
+  const slots=[];
+  if(mode==='cuartos'){
+    slots.push({roundName:'Cuartos de final',matches:[
+      {slotId:`po_${cat}_qf1`,label:'QF 1'},
+      {slotId:`po_${cat}_qf2`,label:'QF 2'},
+      {slotId:`po_${cat}_qf3`,label:'QF 3'},
+      {slotId:`po_${cat}_qf4`,label:'QF 4'},
+    ]});
+  }
+  slots.push({roundName:'Semifinales',matches:[
+    {slotId:`po_${cat}_sf1`,label:'SF 1'},
+    {slotId:`po_${cat}_sf2`,label:'SF 2'},
+  ]});
+  slots.push({roundName:'Final',matches:[
+    {slotId:`po_${cat}_f1`,label:'Final'},
+  ]});
+  return slots;
+}
+
+// Intenta vincular un slot fijo con el partido real de playoff ya creado
+// para mostrar los nombres de las parejas si ya están definidas.
+function matchForSlot(cat,slotId){
+  if(!playoffData[cat])return null;
+  // El ID del partido real de playoff tiene la forma sf1, qf2, f1, etc.
+  // El slotId tiene la forma po_1era_sf1 → extraemos la parte final.
+  const key=slotId.replace(`po_${cat}_`,'');
+  for(const r of playoffData[cat].rounds){
+    const m=r.matches.find(x=>x.id===key);
+    if(m)return m;
+  }
+  return null;
+}
+
 function renderSchedPlayoff(){
-  let html=`<div class="ibar">Asigná cancha y hora a los partidos de playoff. Se muestran automáticamente los cruces de cuartos, semis y final de cada categoría, a medida que se van confirmando.</div>`;
+  const catLabels={"1era":"1º Categoría","2da":"2º Categoría","3era":"3º Categoría"};
+  let html=`<div class="ibar">Asigná cancha y hora a los cruces de playoff. Los slots están disponibles desde el inicio — los nombres de las parejas aparecen automáticamente cuando se genera el cuadro.</div>`;
 
   const allForRef=buildAllMatchOptions();
   const usedAsReference=buildUsedAsReference(allForRef.all);
 
-  let hayAlgo=false;
   ["1era","2da","3era"].forEach(cat=>{
-    if(!playoffData[cat])return;
-    const catLabel={"1era":"1º Categoría","2da":"2º Categoría","3era":"3º Categoría"}[cat];
-    let catHtml='';
-    playoffData[cat].rounds.forEach(r=>{
-      const pendRound=r.matches.filter(m=>m.p1&&m.p2&&(!m.sets||!m.sets.length));
-      if(!pendRound.length)return;
-      catHtml+=`<div class="phase-label" style="margin-top:.8rem;">${catLabel} — ${r.name}</div>`;
-      catHtml+=`<div class="sched-grid">`;
-      pendRound.forEach(m=>{
-        const enriched={...m,isPlayoff:true,roundName:r.name,cat,catLabel:CAT_LABELS[cat]};
-        catHtml+=renderSchedCard(enriched,allForRef.options,usedAsReference);
+    const catLabel=catLabels[cat];
+    const slots=getPlayoffSlots(cat);
+    html+=`<div style="margin-top:1.2rem;font-size:13px;font-weight:600;color:#111;padding-bottom:6px;border-bottom:2px solid #111;">${catLabel}</div>`;
+    slots.forEach(round=>{
+      html+=`<div class="phase-label" style="margin-top:.8rem;">${round.roundName}</div>`;
+      html+=`<div class="sched-grid">`;
+      round.matches.forEach(slot=>{
+        const sched=getSched(slot.slotId);
+        const realMatch=matchForSlot(cat,slot.slotId);
+        let n1='Por definir',n2='Por definir';
+        if(realMatch){
+          if(realMatch.p1) n1=pJ1(realMatch.p1)+' / '+pJ2(realMatch.p1);
+          if(realMatch.p2) n2=pJ1(realMatch.p2)+' / '+pJ2(realMatch.p2);
+        }
+        const otherOpts=allForRef.options
+          .filter(o=>o.id!==slot.slotId)
+          .filter(o=>!usedAsReference.has(o.id) || sched.afterMatchId===o.id)
+          .map(o=>`<option value="${o.id}" ${sched.afterMatchId===o.id?'selected':''}>${o.label}</option>`).join('');
+        html+=`<div class="sched-card">
+          <div class="sched-card-hdr">${catLabel} — ${round.roundName} — ${slot.label}</div>
+          <div class="sched-card-body">
+            <div class="sched-card-vs" style="color:${realMatch?'#111':'var(--gray-light)'};">
+              <strong>${n1}</strong><br><span style="color:var(--gray-light);">vs</span><br><strong>${n2}</strong>
+            </div>
+            <div class="sched-mini-row">
+              <div><label style="margin-top:0;font-size:11px;">Cancha</label>
+                <input type="number" min="1" max="20" placeholder="N°" id="cancha_${slot.slotId}" value="${sched.cancha}" onchange="saveSchedGeneric('${slot.slotId}')"></div>
+              <div><label style="margin-top:0;font-size:11px;">Hora</label>
+                <input type="time" id="hora_${slot.slotId}" value="${sched.hora}" ${sched.after?'disabled':''} onchange="saveSchedGeneric('${slot.slotId}')"></div>
+            </div>
+            <div class="acont-after-toggle">
+              <input type="checkbox" id="after_${slot.slotId}" ${sched.after?'checked':''} onchange="toggleAfter('${slot.slotId}')">
+              <label style="margin:0;" for="after_${slot.slotId}">A continuación de</label>
+            </div>
+            ${sched.after?`<div style="margin-top:8px;"><label style="margin-top:0;font-size:11px;">Partido que tiene que terminar antes</label>
+              <select id="afterMatch_${slot.slotId}" onchange="saveAfterMatch('${slot.slotId}')">
+                <option value="">— Elegí un partido —</option>
+                ${otherOpts}
+              </select>
+            </div>`:''}
+          </div>
+        </div>`;
       });
-      catHtml+=`</div>`;
-      hayAlgo=true;
+      html+=`</div>`;
     });
-    html+=catHtml;
   });
 
-  if(!hayAlgo){
-    html+='<div class="empty">Todavía no hay cuadros de playoff generados. Generá un cuadro desde la pestaña "Playoff" para ver los cruces acá.</div>';
-  }
   return html;
 }
 
 // ---- Helpers compartidos ----
 function buildAllMatchOptions(){
+  const catLabels={"1era":"1º Categoría","2da":"2º Categoría","3era":"3º Categoría"};
   const all=[];
   ["1era","2da","3era"].forEach(cat=>{
     partidos.filter(m=>m.cat===cat&&!m.played).forEach(m=>all.push({...m,catLabel:CAT_LABELS[cat]}));
@@ -1071,9 +1136,20 @@ function buildAllMatchOptions(){
       ).forEach(m=>all.push(m));
     }
   });
+  // Agregar slots fijos de playoff (sin cuadro) para que aparezcan en "A continuación de"
+  ["1era","2da","3era"].forEach(cat=>{
+    getPlayoffSlots(cat).forEach(round=>{
+      round.matches.forEach(slot=>{
+        const yaEsta=all.some(x=>(x.id||x.slotId)===slot.slotId);
+        if(!yaEsta) all.push({id:slot.slotId,isPlayoffSlot:true,cat,catLabel:CAT_LABELS[cat],roundName:round.roundName,slotLabel:slot.label});
+      });
+    });
+  });
   const options=all.map(m=>({
-    id:m.id,
-    label:m.isPlayoff
+    id:m.id||m.slotId,
+    label:m.isPlayoffSlot
+      ?`${catLabels[m.cat]} — ${m.roundName} — ${m.slotLabel}`
+      :m.isPlayoff
       ?`Cat. ${m.catLabel} — ${m.roundName}: ${m.p1?pJ1(m.p1):'?'} vs ${m.p2?pJ1(m.p2):'?'}`
       :`Cat. ${m.catLabel} — Grupo ${m.grupoId}: ${pJ1(m.p1)} vs ${pJ1(m.p2)}`
   }));
