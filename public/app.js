@@ -470,7 +470,7 @@ function renderPublicView(cat,subTab,targetElId){
     if(playoffData[cat].isPreview){
       html+=`<div class="preview-banner">⚠️ Vista previa — el administrador todavía puede modificar este cuadro.</div>`;
     }
-    html+=renderBracketTree(playoffData[cat]);
+    html+=renderBracketTree(playoffData[cat],cat);
     const champ=getChampion(cat);
     if(champ){
       const p=getP(champ);
@@ -683,7 +683,7 @@ function renderJugadoraEntry(nombre,m){
   </div>`;
 }
 
-function renderBracketTree(playoff){
+function renderBracketTree(playoff,cat){
   const MATCH_W=210,COL_GAP=48,COL_W=MATCH_W+COL_GAP,FOOTER_H=20,MATCH_H=44*2+FOOTER_H+2,VPAD=20;
   const rounds=playoff.rounds;
   const r0n=rounds[0].matches.length;
@@ -720,7 +720,11 @@ function renderBracketTree(playoff){
       const n2a=p2?p2.j1:'Por definir',n2b=p2?p2.j2:'';
       let s1='',s2='';
       if(m.sets&&m.sets.length){m.sets.forEach(s=>{s1+=`<span class="sbox ${s[0]>s[1]?'won':''}">${s[0]}</span>`;s2+=`<span class="sbox ${s[1]>s[0]?'won':''}">${s[1]}</span>`;});}
-      const sched=getSched(m.id);
+      // Buscar horario usando el slot fijo de playoff (po_1era_sf1, etc.)
+      // en vez del ID del partido real (sf1), para que coincida con lo
+      // cargado en Canchas y horarios → Playoff.
+      const slotId=cat?`po_${cat}_${m.id}`:m.id;
+      const sched=getSched(slotId)||getSched(m.id);
       let footerText='';
       if(sched.after){const disp=getSchedDisplay(sched);footerText=`A continuación${disp.waitNames?' de '+disp.waitNames:''}${sched.cancha?' · Cancha '+sched.cancha:''}`;}
       else if(sched.cancha||sched.hora) footerText=`${sched.cancha?'Cancha '+sched.cancha:''}${sched.cancha&&sched.hora?' · ':''}${sched.hora||''}`;
@@ -738,8 +742,7 @@ function renderBracketTree(playoff){
         ${footerContent?`<div class="bmatch-footer">${footerContent}</div>`:''}
       </div>`;
     });
-    html+=`</div>`;
-  });
+  html+=`</div>`; });
   html+=`</div></div>`;
   return html;
 }
@@ -1404,7 +1407,7 @@ function renderSectionPlayoff(cat){
   if(po){
     html+=`<div style="margin-top:1.2rem;">`;
     if(po.isPreview) html+=`<div class="preview-banner">⚠️ Vista previa — todavía podés cambiar parejas y formato antes de confirmar.</div>`;
-    html+=renderBracketTree(po);
+    html+=renderBracketTree(po,cat);
     const champ=getChampion(cat);
     if(champ){
       const p=getP(champ);
