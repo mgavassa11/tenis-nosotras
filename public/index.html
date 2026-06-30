@@ -189,14 +189,15 @@ input:focus,select:focus{border-color:var(--pink);}
 .sponsor-admin-row img{height:40px;width:60px;object-fit:contain;border:1px solid #eee;border-radius:6px;background:#fafafa;flex-shrink:0;}
 .sponsor-admin-row .surl{flex:1;font-size:12px;color:var(--gray);word-break:break-all;}
 
-/* Nuevo layout de carga de resultados */
-.res-grid { display: flex; flex-direction: column; gap: 8px; width: 100%; }
-.res-row { display: grid; grid-template-columns: 50px 1fr 1fr; gap: 10px; align-items: center; }
-.res-row.header { margin-bottom: 4px; border-bottom: 1.5px solid #eee; padding-bottom: 8px; }
-.res-label { font-size: 12px; font-weight: 700; color: var(--gray); text-transform: uppercase; letter-spacing: 0.5px; }
-.res-name { font-size: 14px; font-weight: 600; color: #1e3a8a; text-align: center; line-height: 1.2; word-break: break-word; }
-.res-input-cell input { width: 100%; text-align: center; border: 1.5px solid #ccc; border-radius: 8px; padding: 10px 4px; font-size: 16px; font-weight: 600; }
+/* Nuevo layout de carga de resultados (Estilo Tenis) */
+.res-grid { display: flex; flex-direction: column; width: 100%; padding: 8px 0; }
+.res-row { display: grid; grid-template-columns: 50px 1fr auto 1fr; gap: 8px; align-items: end; }
+.res-label { font-size: 14px; font-weight: 700; color: var(--gray); text-transform: uppercase; padding-bottom: 12px; }
+.res-col { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.res-name { font-size: 14px; font-weight: 600; color: #1e3a8a; text-align: center; line-height: 1.2; word-break: break-word; min-height: 34px; }
+.res-input-cell input { width: 80px; text-align: center; border: 1.5px solid #ccc; border-radius: 8px; padding: 10px 4px; font-size: 18px; font-weight: 600; color: #111; }
 .res-input-cell input:focus { border-color: #1e3a8a; outline: none; box-shadow: 0 0 0 2px rgba(30,58,138,0.1); }
+.res-divider { color: #ccc; font-size: 20px; padding-bottom: 10px; font-weight: 300; }
 
 @media (max-width: 600px){
   .header h1{font-size:17px;}
