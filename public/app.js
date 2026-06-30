@@ -226,21 +226,141 @@ function h2hResult(pairAId,pairBId,gId){
   const aWon=aIsP1?w1>w2:w2>w1;
   return aWon?1:-1;
 }
-function compareByTiebreak(a,b,gId){
-  for(const crit of tiebreakOrder){
-    if(crit==='pts'&&a.pts!==b.pts)return b.pts-a.pts;
-    if(crit==='bal'&&a.bal!==b.bal)return b.bal-a.bal;
-    if(crit==='gg'&&a.gg!==b.gg)return b.gg-a.gg;
-    if(crit==='h2h'){
-      const r=h2hResult(a.id,b.id,gId);
-      if(r!==0)return -r;
-    }
-  }
-  return 0;
+// Balance de games considerando SOLO los partidos jugados entre las parejas
+// del grupo recibido como parámetro (usado para la "mini-liga" cuando 3+
+// parejas siguen empatadas después del balance general).
+function balEntreParejas(pairId,gId,paresIds){
+  let gg=0,gp=0;
+  partidos.forEach(m=>{
+    if(m.grupoId!==gId||!m.played)return;
+    const involucraAmbos=(m.p1===pairId&&paresIds.includes(m.p2))||(m.p2===pairId&&paresIds.includes(m.p1));
+    if(!involucraAmbos)return;
+    const ip=m.p1===pairId;
+    m.sets.forEach(s=>{
+      if(ip){gg+=s[0];gp+=s[1];}else{gg+=s[1];gp+=s[0];}
+    });
+  });
+  return gg-gp;
 }
+
+// ====================================================
+// DESEMPATE DENTRO DE UN GRUPO (orden fijo, no configurable):
+// 1. Puntos
+// 2. Resultado cara a cara (solo si son exactamente 2 empatadas)
+// 3. Balance de games (general, todos los partidos del grupo)
+// 4. Resultado cara a cara en mini-liga (si siguen 3+ empatadas:
+//    se compara cara a cara SOLO entre las que siguen empatadas)
+// 5. Balance de games en mini-liga (si el H2H mini-liga no resuelve,
+//    por ejemplo un ciclo A vence a B, B vence a C, C vence a A)
+// Si ninguno de estos resuelve, queda empate (orden estable/arbitrario).
+// ====================================================
+function ordenarGrupoConDesempate(stats,gId){
+  // Paso 1: agrupar por puntos (de mayor a menor)
+  const porPuntos={};
+  stats.forEach(p=>{
+    if(!porPuntos[p.pts])porPuntos[p.pts]=[];
+    porPuntos[p.pts].push(p);
+  });
+  const puntosOrdenados=Object.keys(porPuntos).map(Number).sort((a,b)=>b-a);
+
+  let resultado=[];
+  puntosOrdenados.forEach(pts=>{
+    const grupo=porPuntos[pts];
+    resultado=resultado.concat(desempatarBloque(grupo,gId));
+  });
+  return resultado;
+}
+
+// Desempata un bloque de parejas que están empatadas en puntos.
+function desempatarBloque(bloque,gId){
+  if(bloque.length===1)return bloque;
+
+  if(bloque.length===2){
+    // Paso 2: cara a cara directo (si el partido ya se jugó)
+    const r=h2hResult(bloque[0].id,bloque[1].id,gId);
+    if(r===1)return[bloque[0],bloque[1]];
+    if(r===-1)return[bloque[1],bloque[0]];
+    // Si no se jugó el partido entre sí (r===0), seguimos con balance general
+  }
+
+  // Paso 3: balance de games general (de todos los partidos del grupo)
+  const porBalance={};
+  bloque.forEach(p=>{
+    if(!porBalance[p.bal])porBalance[p.bal]=[];
+    porBalance[p.bal].push(p);
+  });
+  const balOrdenados=Object.keys(porBalance).map(Number).sort((a,b)=>b-a);
+
+  let resultado=[];
+  balOrdenados.forEach(bal=>{
+    const subBloque=porBalance[bal];
+    if(subBloque.length===1){
+      resultado=resultado.concat(subBloque);
+      return;
+    }
+    if(subBloque.length===2){
+      // Ya pasamos por h2h general arriba (cuando bloque.length===2 al
+      // entrar a esta función); si llegamos aquí es porque el bloque
+      // original tenía 3+ y este sub-bloque por balance tiene 2 —
+      // estas dos parejas no necesariamente se enfrentaron entre sí
+      // directo en el contexto correcto, así que aplicamos H2H mini-liga
+      // igual que para 3+, es consistente con el paso 4 del reglamento.
+    }
+    // Paso 4: cara a cara en mini-liga (solo entre las que siguen empatadas)
+    const idsSubBloque=subBloque.map(p=>p.id);
+    resultado=resultado.concat(desempatarMiniLiga(subBloque,gId,idsSubBloque));
+  });
+  return resultado;
+}
+
+// Desempate "mini-liga": cara a cara solo entre las parejas que siguen
+// empatadas (ignorando resultados contra el resto del grupo), y si eso
+// no alcanza (ciclo), balance de games también limitado a esos partidos.
+function desempatarMiniLiga(subBloque,gId,idsSubBloque){
+  if(subBloque.length===2){
+    const r=h2hResult(subBloque[0].id,subBloque[1].id,gId);
+    if(r===1)return[subBloque[0],subBloque[1]];
+    if(r===-1)return[subBloque[1],subBloque[0]];
+    // Sin resultado entre ellas (no jugado): empate real, orden arbitrario
+    return subBloque;
+  }
+
+  // 3 o más empatadas: armamos un mini-ranking de puntos ganados SOLO
+  // en los enfrentamientos entre ellas (1 punto por victoria directa).
+  const miniPts={};
+  subBloque.forEach(p=>{miniPts[p.id]=0;});
+  subBloque.forEach(p=>{
+    subBloque.forEach(q=>{
+      if(p.id===q.id)return;
+      const r=h2hResult(p.id,q.id,gId);
+      if(r===1)miniPts[p.id]+=1;
+    });
+  });
+  const porMiniPts={};
+  subBloque.forEach(p=>{
+    const k=miniPts[p.id];
+    if(!porMiniPts[k])porMiniPts[k]=[];
+    porMiniPts[k].push(p);
+  });
+  const miniPtsOrdenados=Object.keys(porMiniPts).map(Number).sort((a,b)=>b-a);
+
+  let resultado=[];
+  miniPtsOrdenados.forEach(k=>{
+    const sub=porMiniPts[k];
+    if(sub.length===1){resultado=resultado.concat(sub);return;}
+    // Paso 5: si siguen empatadas en mini-liga (ciclo), balance de
+    // games limitado a los partidos jugados entre ellas.
+    const idsSub=sub.map(p=>p.id);
+    const conBalMini=sub.map(p=>({...p,_balMini:balEntreParejas(p.id,gId,idsSub)}));
+    conBalMini.sort((a,b)=>b._balMini-a._balMini);
+    resultado=resultado.concat(conBalMini);
+  });
+  return resultado;
+}
+
 function getStats(gId,cat){
   const raw=getStatsRaw(gId,cat);
-  return raw.sort((a,b)=>compareByTiebreak(a,b,gId));
+  return ordenarGrupoConDesempate(raw,gId);
 }
 function getAdj(p,gId,cat){
   const g=grupos[cat].find(g=>g.id===gId);
@@ -257,6 +377,19 @@ function getAdj(p,gId,cat){
   });
   return{...p,pts,gw,l,gg,gp,bal:gg-gp,adjusted:true};
 }
+// ====================================================
+// DESEMPATE ENTRE MEJORES SEGUNDOS (orden fijo, no configurable):
+// 1. Puntos
+// 2. Diferencia de games (balance)
+// 3. Games ganados
+// 4. Games perdidos (menos es mejor)
+// ====================================================
+function compararMejoresSegundos(a,b){
+  if(a.pts!==b.pts)return b.pts-a.pts;
+  if(a.bal!==b.bal)return b.bal-a.bal;
+  if(a.gg!==b.gg)return b.gg-a.gg;
+  return a.gp-b.gp; // menos games perdidos es mejor
+}
 function getSeeds(cat){
   const cfg=getPlayoffConfig(cat);
   const firsts=[],seconds=[];
@@ -265,8 +398,8 @@ function getSeeds(cat){
     if(st[0])firsts.push({...st[0],rank:1,grupoId:g.id});
     if(st[1])seconds.push({...getAdj(st[1],g.id,cat),rank:2,grupoId:g.id});
   });
-  firsts.sort((a,b)=>b.pts-a.pts||b.bal-a.bal||b.gg-a.gg);
-  seconds.sort((a,b)=>b.pts-a.pts||b.bal-a.bal||b.gg-a.gg);
+  firsts.sort(compararMejoresSegundos);
+  seconds.sort(compararMejoresSegundos);
   // El cuadro siempre enfrenta 1ro vs 2do, así que necesitamos la mitad de
   // cupos para primeros y la otra mitad para segundos (los mejores de cada lista).
   const half=cfg.total/2;
@@ -340,8 +473,13 @@ function buildCatTabs(elId,cur,fn){
   document.getElementById(elId).innerHTML=["1era","2da","3era"].map(c=>`<button class="pill-sm ${c===cur?'active':''}" onclick="${fn}('${c}')">${labels[c]}</button>`).join('');
 }
 function tiebreakLegendHtml(){
-  const ol=tiebreakOrder.map(k=>`<li>${TB_LABELS[k]}</li>`).join('');
-  return `<div class="tiebreak-bar"><strong>Orden de desempate en caso de igualdad:</strong><ol>${ol}</ol></div>`;
+  return `<div class="tiebreak-bar"><strong>Orden de desempate en caso de igualdad:</strong><ol>
+    <li>Puntos</li>
+    <li>Resultado cara a cara (si son 2 empatadas)</li>
+    <li>Diferencia de games</li>
+    <li>Cara a cara en mini-liga (si son 3+ empatadas)</li>
+    <li>Diferencia de games en mini-liga</li>
+  </ol></div>`;
 }
 
 // ====================================================
@@ -533,7 +671,8 @@ function renderPublicView(cat,subTab,targetElId){
           <strong>Cómo se rompe el empate entre segundos:</strong><br>
           1° criterio: más <strong>Pts</strong> (puntos obtenidos en su grupo).<br>
           2° criterio (si persiste el empate en puntos): mejor <strong>Dif</strong> (diferencia de games ganados menos perdidos).<br>
-          3° criterio (si persiste el empate en balance): más <strong>GG</strong> (total de games ganados).<br>
+          3° criterio (si persiste el empate en diferencia): más <strong>GG</strong> (total de games ganados).<br>
+          4° criterio (si persiste el empate en GG): menos <strong>GP</strong> (total de games perdidos).<br>
           En grupos de 5 parejas, las estadísticas del 2do se calculan excluyendo el partido contra la última pareja del grupo, para comparar en igualdad de partidos jugados con los segundos de grupos de 4.
         </div>
       </div>`;
@@ -799,33 +938,31 @@ function switchLiveCat(c){state.liveCat=c;renderA();}
 function switchLiveSub(s){state.liveSubTab=s;renderA();}
 
 function renderSectionTiebreak(){
-  let html=`<div class="ibar">Definí el orden de los criterios de desempate cuando dos o más parejas terminan empatadas en puntos dentro de un mismo grupo.</div>`;
-  html+=`<div class="tb-order-list">`;
-  tiebreakOrder.forEach((crit,i)=>{
-    html+=`<div class="tb-order-item">
-      <div class="num">${i+1}</div>
-      <div class="label">${TB_LABELS[crit]}</div>
-      <div class="arrows">
-        <button class="tb-arrow-btn" onclick="moveTiebreak(${i},-1)" ${i===0?'disabled':''}>↑</button>
-        <button class="tb-arrow-btn" onclick="moveTiebreak(${i},1)" ${i===tiebreakOrder.length-1?'disabled':''}>↓</button>
-      </div>
-    </div>`;
-  });
-  html+=`</div>`;
+  let html=`<div class="ibar">Estos son los criterios de desempate fijos que aplica el sistema. No son editables porque siguen el reglamento oficial de la liga.</div>`;
+  html+=`<div class="tb-order-list">
+    <div class="tb-order-item"><div class="num">1</div><div class="label">Puntos</div></div>
+    <div class="tb-order-item"><div class="num">2</div><div class="label">Resultado cara a cara (si son 2 empatadas)</div></div>
+    <div class="tb-order-item"><div class="num">3</div><div class="label">Diferencia de games</div></div>
+    <div class="tb-order-item"><div class="num">4</div><div class="label">Cara a cara en mini-liga (si son 3+ empatadas)</div></div>
+    <div class="tb-order-item"><div class="num">5</div><div class="label">Diferencia de games en mini-liga</div></div>
+  </div>`;
   html+=`<div class="legend-bar">
     <strong>Puntos:</strong> total de puntos obtenidos en el grupo (3 por victoria).<br>
-    <strong>Diferencia de games:</strong> diferencia entre games ganados y perdidos.<br>
-    <strong>Games ganados:</strong> total de games ganados en el grupo.<br>
-    <strong>Enfrentamiento directo:</strong> resultado del partido jugado entre las parejas empatadas.
+    <strong>Resultado cara a cara:</strong> si dos parejas empatan en puntos y ya jugaron entre sí, gana la posición quien ganó ese partido directo.<br>
+    <strong>Diferencia de games:</strong> diferencia entre games ganados y perdidos en todos los partidos del grupo.<br>
+    <strong>Cara a cara en mini-liga:</strong> si 3 o más parejas siguen empatadas después de la diferencia de games, se comparan los resultados directos SOLO entre ellas (ignorando los partidos contra el resto del grupo).<br>
+    <strong>Diferencia de games en mini-liga:</strong> si el cara a cara en mini-liga tampoco resuelve el empate (por ejemplo un ciclo donde A le gana a B, B le gana a C y C le gana a A), se usa la diferencia de games considerando solo los partidos jugados entre esas parejas.<br><br>
+    <strong>Importante:</strong> si dos parejas están empatadas y todavía no jugaron entre sí, se pasa directo a diferencia de games. Si siguen 0-0 en todo (ninguna jugó su partido), el orden entre ellas queda indefinido hasta que se cargue el resultado.
   </div>`;
+  html+=`<div class="phase-label" style="margin-top:1.5rem;">Desempate entre mejores segundos (para clasificar a cuartos)</div>`;
+  html+=`<div class="tb-order-list">
+    <div class="tb-order-item"><div class="num">1</div><div class="label">Puntos</div></div>
+    <div class="tb-order-item"><div class="num">2</div><div class="label">Diferencia de games</div></div>
+    <div class="tb-order-item"><div class="num">3</div><div class="label">Games ganados</div></div>
+    <div class="tb-order-item"><div class="num">4</div><div class="label">Games perdidos (menos es mejor)</div></div>
+  </div>`;
+  html+=`<div class="legend-bar">Se usa cuando hay que comparar los segundos puestos de distintos grupos entre sí. No incluye cara a cara porque esas parejas no se enfrentaron en la fase de grupos.</div>`;
   return html;
-}
-async function moveTiebreak(idx,dir){
-  const newIdx=idx+dir;
-  if(newIdx<0||newIdx>=tiebreakOrder.length)return;
-  [tiebreakOrder[idx],tiebreakOrder[newIdx]]=[tiebreakOrder[newIdx],tiebreakOrder[idx]];
-  await supabaseClient.from('configuracion').upsert({clave:'tiebreak_order',valor:tiebreakOrder});
-  renderA();renderJContent();showToast('Orden de desempate actualizado');
 }
 
 // ====================================================
