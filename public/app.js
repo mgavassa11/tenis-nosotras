@@ -226,36 +226,26 @@ function h2hResult(pairAId,pairBId,gId){
   const aWon=aIsP1?w1>w2:w2>w1;
   return aWon?1:-1;
 }
-// Balance de games considerando SOLO los partidos jugados entre las parejas
-// del grupo recibido como parámetro (usado para la "mini-liga" cuando 3+
-// parejas siguen empatadas después del balance general).
-function balEntreParejas(pairId,gId,paresIds){
-  let gg=0,gp=0;
-  partidos.forEach(m=>{
-    if(m.grupoId!==gId||!m.played)return;
-    const involucraAmbos=(m.p1===pairId&&paresIds.includes(m.p2))||(m.p2===pairId&&paresIds.includes(m.p1));
-    if(!involucraAmbos)return;
-    const ip=m.p1===pairId;
-    m.sets.forEach(s=>{
-      if(ip){gg+=s[0];gp+=s[1];}else{gg+=s[1];gp+=s[0];}
-    });
-  });
-  return gg-gp;
+
+// Sorteo estable: usamos el id de la pareja como semilla simple para que el
+// resultado del sorteo no cambie en cada render (no es aleatorio en cada
+// pantalla, pero tampoco sigue ningún criterio deportivo real).
+function ordenSorteo(bloque){
+  return[...bloque].sort((a,b)=>a.id.localeCompare(b.id));
 }
 
 // ====================================================
 // DESEMPATE DENTRO DE UN GRUPO (orden fijo, no configurable):
 // 1. Puntos
-// 2. Resultado cara a cara (solo si son exactamente 2 empatadas)
-// 3. Balance de games (general, todos los partidos del grupo)
-// 4. Resultado cara a cara en mini-liga (si siguen 3+ empatadas:
-//    se compara cara a cara SOLO entre las que siguen empatadas)
-// 5. Balance de games en mini-liga (si el H2H mini-liga no resuelve,
-//    por ejemplo un ciclo A vence a B, B vence a C, C vence a A)
-// Si ninguno de estos resuelve, queda empate (orden estable/arbitrario).
+// 2. Si son exactamente 2 empatadas: cara a cara directo entre ellas
+// 3. Si son 3 o más empatadas: diferencia de games considerando TODOS
+//    los partidos del grupo (no solo entre las empatadas). Las que
+//    sigan empatadas de a 2 en esa diferencia se resuelven por cara a
+//    cara directo entre ellas. Si siguen empatadas de a 3 o más en esa
+//    diferencia (ciclo perfecto), se define por sorteo.
 // ====================================================
 function ordenarGrupoConDesempate(stats,gId){
-  // Paso 1: agrupar por puntos (de mayor a menor)
+  // Agrupar por puntos (de mayor a menor)
   const porPuntos={};
   stats.forEach(p=>{
     if(!porPuntos[p.pts])porPuntos[p.pts]=[];
@@ -276,14 +266,15 @@ function desempatarBloque(bloque,gId){
   if(bloque.length===1)return bloque;
 
   if(bloque.length===2){
-    // Paso 2: cara a cara directo (si el partido ya se jugó)
     const r=h2hResult(bloque[0].id,bloque[1].id,gId);
     if(r===1)return[bloque[0],bloque[1]];
     if(r===-1)return[bloque[1],bloque[0]];
-    // Si no se jugó el partido entre sí (r===0), seguimos con balance general
+    // Si no se jugó el partido entre sí todavía: queda indefinido por ahora
+    return bloque;
   }
 
-  // Paso 3: balance de games general (de todos los partidos del grupo)
+  // 3 o más empatadas en puntos: diferencia de games del GRUPO COMPLETO
+  // (ya viene calculada en p.bal con todos los partidos jugados del grupo).
   const porBalance={};
   bloque.forEach(p=>{
     if(!porBalance[p.bal])porBalance[p.bal]=[];
@@ -296,64 +287,17 @@ function desempatarBloque(bloque,gId){
     const subBloque=porBalance[bal];
     if(subBloque.length===1){
       resultado=resultado.concat(subBloque);
-      return;
+    }else if(subBloque.length===2){
+      // Dos parejas con la misma diferencia general: cara a cara entre ellas
+      const r=h2hResult(subBloque[0].id,subBloque[1].id,gId);
+      if(r===1)resultado=resultado.concat([subBloque[0],subBloque[1]]);
+      else if(r===-1)resultado=resultado.concat([subBloque[1],subBloque[0]]);
+      else resultado=resultado.concat(subBloque); // no jugaron entre sí: indefinido
+    }else{
+      // 3 o más con exactamente la misma diferencia general: ciclo
+      // perfecto, no hay más criterios deportivos → sorteo.
+      resultado=resultado.concat(ordenSorteo(subBloque));
     }
-    if(subBloque.length===2){
-      // Ya pasamos por h2h general arriba (cuando bloque.length===2 al
-      // entrar a esta función); si llegamos aquí es porque el bloque
-      // original tenía 3+ y este sub-bloque por balance tiene 2 —
-      // estas dos parejas no necesariamente se enfrentaron entre sí
-      // directo en el contexto correcto, así que aplicamos H2H mini-liga
-      // igual que para 3+, es consistente con el paso 4 del reglamento.
-    }
-    // Paso 4: cara a cara en mini-liga (solo entre las que siguen empatadas)
-    const idsSubBloque=subBloque.map(p=>p.id);
-    resultado=resultado.concat(desempatarMiniLiga(subBloque,gId,idsSubBloque));
-  });
-  return resultado;
-}
-
-// Desempate "mini-liga": cara a cara solo entre las parejas que siguen
-// empatadas (ignorando resultados contra el resto del grupo), y si eso
-// no alcanza (ciclo), balance de games también limitado a esos partidos.
-function desempatarMiniLiga(subBloque,gId,idsSubBloque){
-  if(subBloque.length===2){
-    const r=h2hResult(subBloque[0].id,subBloque[1].id,gId);
-    if(r===1)return[subBloque[0],subBloque[1]];
-    if(r===-1)return[subBloque[1],subBloque[0]];
-    // Sin resultado entre ellas (no jugado): empate real, orden arbitrario
-    return subBloque;
-  }
-
-  // 3 o más empatadas: armamos un mini-ranking de puntos ganados SOLO
-  // en los enfrentamientos entre ellas (1 punto por victoria directa).
-  const miniPts={};
-  subBloque.forEach(p=>{miniPts[p.id]=0;});
-  subBloque.forEach(p=>{
-    subBloque.forEach(q=>{
-      if(p.id===q.id)return;
-      const r=h2hResult(p.id,q.id,gId);
-      if(r===1)miniPts[p.id]+=1;
-    });
-  });
-  const porMiniPts={};
-  subBloque.forEach(p=>{
-    const k=miniPts[p.id];
-    if(!porMiniPts[k])porMiniPts[k]=[];
-    porMiniPts[k].push(p);
-  });
-  const miniPtsOrdenados=Object.keys(porMiniPts).map(Number).sort((a,b)=>b-a);
-
-  let resultado=[];
-  miniPtsOrdenados.forEach(k=>{
-    const sub=porMiniPts[k];
-    if(sub.length===1){resultado=resultado.concat(sub);return;}
-    // Paso 5: si siguen empatadas en mini-liga (ciclo), balance de
-    // games limitado a los partidos jugados entre ellas.
-    const idsSub=sub.map(p=>p.id);
-    const conBalMini=sub.map(p=>({...p,_balMini:balEntreParejas(p.id,gId,idsSub)}));
-    conBalMini.sort((a,b)=>b._balMini-a._balMini);
-    resultado=resultado.concat(conBalMini);
   });
   return resultado;
 }
@@ -475,10 +419,10 @@ function buildCatTabs(elId,cur,fn){
 function tiebreakLegendHtml(){
   return `<div class="tiebreak-bar"><strong>Orden de desempate en caso de igualdad:</strong><ol>
     <li>Puntos</li>
-    <li>Resultado cara a cara (si son 2 empatadas)</li>
-    <li>Diferencia de games</li>
-    <li>Cara a cara en mini-liga (si son 3+ empatadas)</li>
-    <li>Diferencia de games en mini-liga</li>
+    <li>Si son 2 empatadas: resultado cara a cara entre ellas</li>
+    <li>Si son 3 o más empatadas: diferencia de games de todo el grupo</li>
+    <li>Las que sigan empatadas de a 2 en esa diferencia: cara a cara entre ellas</li>
+    <li>Si sigue el empate entre 3 o más (ciclo perfecto): sorteo</li>
   </ol></div>`;
 }
 
@@ -941,18 +885,17 @@ function renderSectionTiebreak(){
   let html=`<div class="ibar">Estos son los criterios de desempate fijos que aplica el sistema. No son editables porque siguen el reglamento oficial de la liga.</div>`;
   html+=`<div class="tb-order-list">
     <div class="tb-order-item"><div class="num">1</div><div class="label">Puntos</div></div>
-    <div class="tb-order-item"><div class="num">2</div><div class="label">Resultado cara a cara (si son 2 empatadas)</div></div>
-    <div class="tb-order-item"><div class="num">3</div><div class="label">Diferencia de games</div></div>
-    <div class="tb-order-item"><div class="num">4</div><div class="label">Cara a cara en mini-liga (si son 3+ empatadas)</div></div>
-    <div class="tb-order-item"><div class="num">5</div><div class="label">Diferencia de games en mini-liga</div></div>
+    <div class="tb-order-item"><div class="num">2</div><div class="label">Si son 2 empatadas: cara a cara entre ellas</div></div>
+    <div class="tb-order-item"><div class="num">3</div><div class="label">Si son 3+ empatadas: diferencia de games de todo el grupo</div></div>
+    <div class="tb-order-item"><div class="num">4</div><div class="label">Las que sigan empatadas de a 2 en esa diferencia: cara a cara entre ellas</div></div>
+    <div class="tb-order-item"><div class="num">5</div><div class="label">Si sigue el empate entre 3+ (ciclo perfecto): sorteo</div></div>
   </div>`;
   html+=`<div class="legend-bar">
     <strong>Puntos:</strong> total de puntos obtenidos en el grupo (3 por victoria).<br>
-    <strong>Resultado cara a cara:</strong> si dos parejas empatan en puntos y ya jugaron entre sí, gana la posición quien ganó ese partido directo.<br>
-    <strong>Diferencia de games:</strong> diferencia entre games ganados y perdidos en todos los partidos del grupo.<br>
-    <strong>Cara a cara en mini-liga:</strong> si 3 o más parejas siguen empatadas después de la diferencia de games, se comparan los resultados directos SOLO entre ellas (ignorando los partidos contra el resto del grupo).<br>
-    <strong>Diferencia de games en mini-liga:</strong> si el cara a cara en mini-liga tampoco resuelve el empate (por ejemplo un ciclo donde A le gana a B, B le gana a C y C le gana a A), se usa la diferencia de games considerando solo los partidos jugados entre esas parejas.<br><br>
-    <strong>Importante:</strong> si dos parejas están empatadas y todavía no jugaron entre sí, se pasa directo a diferencia de games. Si siguen 0-0 en todo (ninguna jugó su partido), el orden entre ellas queda indefinido hasta que se cargue el resultado.
+    <strong>Si son 2 empatadas:</strong> si ya jugaron entre sí, gana la posición quien ganó ese partido directo. Si todavía no jugaron entre sí, el empate queda indefinido hasta que se cargue ese resultado.<br>
+    <strong>Si son 3 o más empatadas:</strong> se calcula la diferencia de games (games ganados menos perdidos) de cada una considerando TODOS los partidos jugados en el grupo, no solo los enfrentamientos entre las empatadas. La que tenga mejor diferencia general queda mejor posicionada.<br>
+    <strong>Las que sigan empatadas de a 2</strong> en esa diferencia general se desempatan por el resultado directo entre ellas.<br>
+    <strong>Sorteo:</strong> si 3 o más parejas tienen exactamente la misma diferencia de games general (por ejemplo un ciclo perfecto donde A le gana a B 4-0, B le gana a C 4-0 y C le gana a A 4-0), no queda ningún criterio deportivo para desempatar y se define por sorteo.
   </div>`;
   html+=`<div class="phase-label" style="margin-top:1.5rem;">Desempate entre mejores segundos (para clasificar a cuartos)</div>`;
   html+=`<div class="tb-order-list">
