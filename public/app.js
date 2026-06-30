@@ -59,6 +59,15 @@ const CLASIF_LABELS={
   "1ro_mejor3":"Todos los 1º y los 3 mejores 2º",
 };
 
+// Datos generales del torneo (editables por el admin)
+let torneoInfo={
+  emoji:"🎾",
+  nombre:"Tenis y Nosotras × club24",
+  subtitulo:"Torneo Americano de Damas — 26 de Junio · Los Cardales Country Club"
+};
+// Lista de imágenes de sponsors (URLs), agregadas por el admin.
+let sponsors=[];
+
 const state={
   mainView:"jugadoras",
   cat:"1era",adminCat:"1era",
@@ -196,6 +205,8 @@ async function loadAllData(){
     if(row.clave==='tiebreak_order') tiebreakOrder=row.valor;
     if(row.clave==='reglamento') reglamentoText=row.valor||'';
     if(row.clave==='clasificacion_mode') clasificacionMode={...clasificacionMode,...row.valor};
+    if(row.clave==='torneo_info') torneoInfo={...torneoInfo,...row.valor};
+    if(row.clave==='sponsors') sponsors=row.valor||[];
     if(row.clave==='grupos_vacios'){
       // Grupos creados por el admin que todavía no tienen parejas cargadas.
       // Los agregamos solo si no quedaron ya representados por alguna pareja.
@@ -511,8 +522,8 @@ function renderMainTabs(){
   document.getElementById('app').innerHTML=`
     <div class="header">
       <div class="header-credit">Cuadro del torneo<br>by @marcosgavassaa</div>
-      <h1>🎾 Tenis y Nosotras × club24</h1>
-      <p>Torneo Americano de Damas — 26 de Junio · Los Cardales Country Club</p>
+      <h1>${torneoInfo.emoji} ${torneoInfo.nombre}</h1>
+      <p>${torneoInfo.subtitulo}</p>
     </div>
     <div class="pillbar" id="mainTabs"></div>
     <div id="view-jugadoras" style="display:${state.mainView==='jugadoras'?'block':'none'};">
@@ -668,6 +679,16 @@ function renderPublicView(cat,subTab,targetElId){
   if(!grupos[cat]||!grupos[cat].length){
     el.innerHTML='<div class="empty">Todavía no hay parejas cargadas en esta categoría.</div>';
     return;
+  }
+
+  // SPONSORS: solo se muestran si el administrador cargó al menos uno.
+  // Van justo entre los tabs/sub-tabs y el contenido de grupos.
+  if(sponsors.length){
+    html+=`<div class="sponsors-strip">`;
+    sponsors.forEach(url=>{
+      html+=`<img src="${url}" alt="Sponsor" class="sponsor-img">`;
+    });
+    html+=`</div>`;
   }
 
   const{firsts,seconds,qualSeconds,cfg}=getSeeds(cat);
@@ -1014,6 +1035,8 @@ function renderA(){
     <button class="pill-sm ${state.adminSection==='playoff'?'active':''}" onclick="switchAdminSection('playoff')">Playoff</button>
     <button class="pill-sm ${state.adminSection==='tiebreak'?'active':''}" onclick="switchAdminSection('tiebreak')">Desempate</button>
     <button class="pill-sm ${state.adminSection==='reglamento'?'active':''}" onclick="switchAdminSection('reglamento')">Reglamento</button>
+    <button class="pill-sm ${state.adminSection==='sponsors'?'active':''}" onclick="switchAdminSection('sponsors')">Sponsors</button>
+    <button class="pill-sm ${state.adminSection==='torneoinfo'?'active':''}" onclick="switchAdminSection('torneoinfo')">Datos del torneo</button>
   `;
   renderAContent();
 }
@@ -1048,6 +1071,8 @@ function renderAContent(){
   else if(state.adminSection==='clasificacion') html=renderSectionClasificacion(cat);
   else if(state.adminSection==='tiebreak') html=renderSectionTiebreak();
   else if(state.adminSection==='reglamento') html=renderSectionReglamento();
+  else if(state.adminSection==='sponsors') html=renderSectionSponsors();
+  else if(state.adminSection==='torneoinfo') html=renderSectionTorneoInfo();
   document.getElementById('acontent').innerHTML=html;
 }
 function switchLiveCat(c){state.liveCat=c;renderA();}
@@ -1118,6 +1143,74 @@ function renderSectionTiebreak(){
 // ====================================================
 // REGLAMENTO
 // ====================================================
+// ====================================================
+// DATOS DEL TORNEO (nombre, fecha, lugar)
+// ====================================================
+function renderSectionTorneoInfo(){
+  return `<div class="ibar">Estos datos aparecen en el encabezado de la app, visible para todas las jugadoras.</div>
+    <label>Emoji / ícono</label>
+    <input id="torneoEmojiInput" value="${torneoInfo.emoji}" maxlength="4" style="max-width:80px;">
+    <label>Nombre del torneo</label>
+    <input id="torneoNombreInput" value="${torneoInfo.nombre}">
+    <label>Subtítulo (fecha, lugar, categoría, etc.)</label>
+    <input id="torneoSubtituloInput" value="${torneoInfo.subtitulo}" placeholder="Ej: Torneo Americano de Damas — 26 de Junio · Los Cardales Country Club">
+    <button class="btn btn-pink btn-sm" style="margin-top:10px;" onclick="saveTorneoInfo()">Guardar datos del torneo</button>`;
+}
+async function saveTorneoInfo(){
+  torneoInfo={
+    emoji:document.getElementById('torneoEmojiInput').value||'🎾',
+    nombre:document.getElementById('torneoNombreInput').value||'Torneo',
+    subtitulo:document.getElementById('torneoSubtituloInput').value||''
+  };
+  await supabaseClient.from('configuracion').upsert({clave:'torneo_info',valor:torneoInfo});
+  renderMainTabs();
+  if(state.mainView==='jugadoras')renderJ();
+  else if(state.adminUnlocked)renderA();
+  showToast('Datos del torneo guardados ✓');
+}
+
+// ====================================================
+// SPONSORS (imágenes vía URL, mostradas solo si hay alguna cargada)
+// ====================================================
+function renderSectionSponsors(){
+  let html=`<div class="ibar">Pegá el link directo de cada imagen (por ejemplo subiéndola primero a imgur.com/upload y copiando la dirección de la imagen — tiene que terminar en .png, .jpg o .jpeg). No se pueden subir archivos directamente desde acá, solo enlaces. Si no cargás ningún sponsor, esta sección no se muestra en la vista de las jugadoras.</div>`;
+  html+=`<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+    <input id="newSponsorUrl" placeholder="https://i.imgur.com/ejemplo.png" style="flex:1;min-width:200px;">
+    <button class="btn btn-pink btn-sm" onclick="addSponsor()">+ Agregar sponsor</button>
+  </div>`;
+  if(!sponsors.length){
+    html+='<div class="empty">Todavía no hay sponsors cargados.</div>';
+  }else{
+    html+=`<div class="grupo" style="padding:10px 14px;">`;
+    sponsors.forEach((url,i)=>{
+      html+=`<div class="sponsor-admin-row">
+        <img src="${url}" alt="Sponsor" onerror="this.style.opacity=0.3">
+        <div class="surl">${url}</div>
+        <button class="btn btn-red btn-sm" onclick="delSponsor(${i})">Borrar</button>
+      </div>`;
+    });
+    html+=`</div>`;
+  }
+  return html;
+}
+async function addSponsor(){
+  const input=document.getElementById('newSponsorUrl');
+  const url=input.value.trim();
+  if(!url){showToast('Pegá un link de imagen primero');return;}
+  sponsors.push(url);
+  await supabaseClient.from('configuracion').upsert({clave:'sponsors',valor:sponsors});
+  renderA();
+  if(state.mainView==='jugadoras')renderJContent();
+  showToast('Sponsor agregado ✓');
+}
+async function delSponsor(i){
+  sponsors.splice(i,1);
+  await supabaseClient.from('configuracion').upsert({clave:'sponsors',valor:sponsors});
+  renderA();
+  if(state.mainView==='jugadoras')renderJContent();
+  showToast('Sponsor eliminado');
+}
+
 function renderSectionReglamento(){
   return `<div class="ibar">Escribí acá el reglamento del torneo. Para hacer una lista con viñetas, empezá cada línea con un guión "-" o un asterisco "*". Los cambios se ven reflejados para todas las jugadoras apenas guardás.</div>
     <textarea id="reglamentoInput" rows="16" style="width:100%;padding:12px;border:1.5px solid #ccc;border-radius:10px;font-family:inherit;font-size:14px;line-height:1.6;resize:vertical;" placeholder="Ejemplo:
