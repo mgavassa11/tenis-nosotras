@@ -175,9 +175,6 @@ async function loadAllData(){
     }
     groupMap[key].parejas.push({id:p.id,j1:p.jugadora1,j2:p.jugadora2,cardales:p.cardales});
   });
-  Object.keys(grupos).forEach(cat=>{
-    grupos[cat].sort((a,b)=>a.id.localeCompare(b.id));
-  });
 
   partidos=(matchesData||[]).map(m=>({
     id:m.id,cat:m.categoria,grupoId:m.grupo_id,p1:m.pareja1_id,p2:m.pareja2_id,
@@ -199,11 +196,36 @@ async function loadAllData(){
     if(row.clave==='tiebreak_order') tiebreakOrder=row.valor;
     if(row.clave==='reglamento') reglamentoText=row.valor||'';
     if(row.clave==='clasificacion_mode') clasificacionMode={...clasificacionMode,...row.valor};
+    if(row.clave==='grupos_vacios'){
+      // Grupos creados por el admin que todavía no tienen parejas cargadas.
+      // Los agregamos solo si no quedaron ya representados por alguna pareja.
+      const vacios=row.valor||{};
+      ["1era","2da","3era"].forEach(c=>{
+        (vacios[c]||[]).forEach(gid=>{
+          if(!grupos[c].some(g=>g.id===gid)){
+            grupos[c].push({id:gid,parejas:[]});
+          }
+        });
+      });
+    }
+  });
+
+  Object.keys(grupos).forEach(cat=>{
+    grupos[cat].sort((a,b)=>a.id.localeCompare(b.id));
   });
 
   ["1era","2da","3era"].forEach(c=>{
     if(grupos[c].length && !state.adminPairsGroup[c]) state.adminPairsGroup[c]=grupos[c][0].id;
   });
+}
+// Guarda en Supabase la lista de grupos que existen pero todavía no tienen
+// ninguna pareja cargada, para que no se pierdan al recargar la página.
+async function saveGruposVacios(){
+  const vacios={};
+  ["1era","2da","3era"].forEach(c=>{
+    vacios[c]=grupos[c].filter(g=>g.parejas.length===0).map(g=>g.id);
+  });
+  await supabaseClient.from('configuracion').upsert({clave:'grupos_vacios',valor:vacios});
 }
 
 // ====================================================
@@ -396,11 +418,32 @@ function getSeeds(cat){
   });
   const firstsOrdenados=ordenarMejoresConSorteo(firsts);
   const secondsOrdenados=ordenarMejoresConSorteo(seconds);
-  // El cuadro siempre enfrenta 1ro vs 2do, así que necesitamos la mitad de
-  // cupos para primeros y la otra mitad para segundos (los mejores de cada lista).
-  const half=cfg.total/2;
-  const qF=firstsOrdenados.slice(0,half);
-  const qS=secondsOrdenados.slice(0,half);
+
+  // Cuántos segundos clasifican según el modo elegido en "Clasificación":
+  // 0 ("1ros"), null=todos ("1ros_2dos"), o 1/2/3 (mejor 2do, 2 mejores, 3 mejores).
+  const cuposSegundos=getCuposMejoresSegundos(cat);
+
+  let qF,qS;
+  if(cuposSegundos===0){
+    // Solo clasifican los primeros: tomamos tantos primeros como cupos
+    // tenga el cuadro de playoff (cfg.total).
+    qF=firstsOrdenados.slice(0,cfg.total);
+    qS=[];
+  }else if(cuposSegundos===null){
+    // Todos los primeros y todos los segundos clasifican: el cuadro de
+    // playoff necesita cfg.total parejas en total, repartidas entre todos
+    // los primeros (hasta donde alcancen) y luego los segundos que falten.
+    qF=firstsOrdenados.slice(0,cfg.total);
+    const faltan=Math.max(0,cfg.total-qF.length);
+    qS=secondsOrdenados.slice(0,faltan);
+  }else{
+    // Todos los primeros + una cantidad fija de mejores segundos (1, 2 o 3),
+    // tal como se definió en la pestaña Clasificación — independiente del
+    // total de cupos del cuadro de playoff.
+    qF=firstsOrdenados.slice(0,firstsOrdenados.length);
+    qS=secondsOrdenados.slice(0,cuposSegundos);
+  }
+
   return{firsts:firstsOrdenados,seconds:secondsOrdenados,qualFirsts:qF,qualSeconds:qS,cfg};
 }
 function getChampion(cat){
@@ -664,6 +707,10 @@ function renderPublicView(cat,subTab,targetElId){
   html+=`<div class="phase-label" style="margin-top:${playoffData[cat]?'1.8rem':'0'};">Zona de grupos</div>`;
   grupos[cat].forEach(g=>{
     const stats=getStats(g.id,cat);
+    if(!g.parejas.length){
+      html+=`<div class="grupo"><div class="grupo-header">Grupo ${g.id} · sin parejas todavía</div></div>`;
+      return;
+    }
     let cutPos=clasifInfo.cutPos;
     // Si hay 2+ parejas empatadas exactamente en el límite del corte propio
     // del grupo (mismo Pts, Dif, GG y GP que la pareja en la posición de
@@ -1033,7 +1080,11 @@ function renderSectionClasificacion(cat){
 async function setClasificacionMode(cat,mode){
   clasificacionMode[cat]=mode;
   await supabaseClient.from('configuracion').upsert({clave:'clasificacion_mode',valor:clasificacionMode});
-  renderA();renderJContent();showToast('Modo de clasificación actualizado');
+  // Refrescar tanto el panel de admin (la pestaña Clasificación en sí, y si
+  // estamos en Live también esa vista) como la vista pública de Jugadoras.
+  renderA();
+  renderJContent();
+  showToast('Modo de clasificación actualizado');
 }
 
 function renderSectionTiebreak(){
@@ -1108,15 +1159,20 @@ function renderReglamentoHtml(text){
 }
 
 function renderSectionPairs(cat){
+  let html=`<div class="ibar">Elegí un grupo para editar sus parejas. Podés cambiar nombres, agregar, quitar o mover una pareja a otro grupo (incluso de otra categoría). También podés agregar grupos nuevos o borrar grupos vacíos según la cantidad de parejas inscriptas.</div>`;
+
   if(!grupos[cat]||!grupos[cat].length){
-    return '<div class="empty">Todavía no hay parejas cargadas en esta categoría.</div>';
+    html+='<div class="empty" style="margin-bottom:1rem;">Todavía no hay grupos cargados en esta categoría.</div>';
+    html+=`<button class="btn btn-pink btn-sm" onclick="addGroup('${cat}')">+ Agregar grupo</button>`;
+    return html;
   }
-  let html=`<div class="ibar">Elegí un grupo para editar sus parejas. Podés cambiar nombres, agregar, quitar o mover una pareja a otro grupo (incluso de otra categoría).</div>`;
+
   html+=`<div class="group-select-bar">`;
   grupos[cat].forEach(g=>{
     const active=state.adminPairsGroup[cat]===g.id;
     html+=`<button class="group-select-btn ${active?'active':''}" onclick="selectPairsGroup('${cat}','${g.id}')">Grupo ${g.id}</button>`;
   });
+  html+=`<button class="group-select-btn" style="background:#fff;color:var(--pink);border:1.5px dashed var(--pink);" onclick="addGroup('${cat}')">+ Agregar grupo</button>`;
   html+=`</div>`;
 
   const selectedG=grupos[cat].find(g=>g.id===state.adminPairsGroup[cat])||grupos[cat][0];
@@ -1130,8 +1186,14 @@ function renderSectionPairs(cat){
   });
 
   html+=`<div class="grupo" style="margin-bottom:1.2rem;">
-    <div class="grupo-header">Grupo ${selectedG.id} (${selectedG.parejas.length} parejas)</div>
+    <div class="grupo-header" style="display:flex;align-items:center;justify-content:space-between;padding-right:10px;">
+      <span>Grupo ${selectedG.id} (${selectedG.parejas.length} parejas)</span>
+      ${selectedG.parejas.length===0?`<button class="btn btn-red btn-sm" onclick="deleteGroup('${cat}','${selectedG.id}')">Borrar grupo</button>`:''}
+    </div>
     <div style="padding:12px;">`;
+  if(selectedG.parejas.length===0){
+    html+=`<div class="empty" style="padding:1rem 0;">Este grupo está vacío. Agregá parejas o borralo si no lo vas a usar.</div>`;
+  }
   selectedG.parejas.forEach((p,pi)=>{
     const moveOpts=allGroupOptions.map(o=>`<option value="${o.cat}|${o.gid}" ${o.cat===cat&&o.gid===selectedG.id?'selected':''}>${o.label}</option>`).join('');
     html+=`<div class="prow">
@@ -1146,6 +1208,46 @@ function renderSectionPairs(cat){
   html+=`<button class="btn btn-out btn-sm" style="margin-top:8px;" onclick="addP('${cat}',${gi})">+ Agregar pareja</button>
     </div></div>`;
   return html;
+}
+// Genera el siguiente ID de grupo disponible para la categoría, siguiendo
+// el patrón existente (1A, 1B, 1C... / 2A, 2B... / 3A, 3B...).
+function nextGroupId(cat){
+  const prefix={"1era":"1","2da":"2","3era":"3"}[cat];
+  const existentes=grupos[cat].map(g=>g.id);
+  for(let i=0;i<26;i++){
+    const letra=String.fromCharCode(65+i); // A, B, C...
+    const candidato=prefix+letra;
+    if(!existentes.includes(candidato))return candidato;
+  }
+  return prefix+'X'+Date.now(); // fallback extremo, no debería pasar
+}
+async function addGroup(cat){
+  const newId=nextGroupId(cat);
+  grupos[cat].push({id:newId,parejas:[]});
+  grupos[cat].sort((a,b)=>a.id.localeCompare(b.id));
+  state.adminPairsGroup[cat]=newId;
+  await saveGruposVacios();
+  renderA();
+  showToast(`Grupo ${newId} agregado`);
+}
+async function deleteGroup(cat,gid){
+  const g=grupos[cat].find(x=>x.id===gid);
+  if(!g)return;
+  if(g.parejas.length>0){
+    showToast('Solo se pueden borrar grupos vacíos');
+    return;
+  }
+  const ok=confirm(`¿Seguro que querés borrar el Grupo ${gid}? Esta acción no se puede deshacer.`);
+  if(!ok)return;
+  grupos[cat]=grupos[cat].filter(x=>x.id!==gid);
+  // Borrar también cualquier partido/horario residual de ese grupo (no debería
+  // haber, ya que el grupo está vacío, pero por seguridad lo limpiamos igual).
+  await supabaseClient.from('partidos').delete().eq('grupo_id',gid).eq('categoria',cat);
+  partidos=partidos.filter(m=>!(m.grupoId===gid&&m.cat===cat));
+  state.adminPairsGroup[cat]=grupos[cat].length?grupos[cat][0].id:null;
+  await saveGruposVacios();
+  renderA();
+  showToast(`Grupo ${gid} eliminado`);
 }
 function selectPairsGroup(cat,gid){state.adminPairsGroup[cat]=gid;renderA();}
 async function editP(cat,gi,pi,f,v){
@@ -1162,16 +1264,23 @@ async function delP(cat,gi,pi){
   await supabaseClient.from('partidos').delete().or(`pareja1_id.eq.${pid},pareja2_id.eq.${pid}`);
   await supabaseClient.from('parejas').delete().eq('id',pid);
   await regenerateMatchesForGroup(cat,grupos[cat][gi].id);
+  // Si el grupo quedó vacío después de borrar esta pareja, lo registramos
+  // como "vacío" para que no se pierda al recargar la página.
+  if(grupos[cat][gi].parejas.length===0) await saveGruposVacios();
   renderA();showToast('Eliminado');
 }
 async function addP(cat,gi){
   const id='p'+Date.now();
   const newPair={id,j1:'Jugadora 1',j2:'Jugadora 2'};
+  const eraVacio=grupos[cat][gi].parejas.length===0;
   grupos[cat][gi].parejas.push(newPair);
   await supabaseClient.from('parejas').insert({
     id,categoria:cat,grupo_id:grupos[cat][gi].id,jugadora1:'Jugadora 1',jugadora2:'Jugadora 2',cardales:false
   });
   await regenerateMatchesForGroup(cat,grupos[cat][gi].id);
+  // El grupo dejó de estar vacío: lo sacamos de la lista persistida de
+  // grupos vacíos (ya queda representado naturalmente por sus parejas).
+  if(eraVacio) await saveGruposVacios();
   renderA();showToast('Pareja agregada');
 }
 async function movePair(cat,gi,pi,target){
@@ -1189,6 +1298,10 @@ async function movePair(cat,gi,pi,target){
 
   await regenerateMatchesForGroup(cat,oldGid);
   await regenerateMatchesForGroup(targetCat,targetGid);
+
+  // El grupo de origen puede haber quedado vacío, y el de destino puede
+  // haber dejado de estarlo: actualizamos la lista persistida en ambos casos.
+  await saveGruposVacios();
 
   state.adminPairsGroup[cat]=grupos[cat][gi].id;
   renderA();
@@ -1621,17 +1734,21 @@ function renderSectionPlayoff(cat){
   const{qualFirsts,qualSeconds,cfg}=getSeeds(cat);
   const po=playoffData[cat];
   const isPreview=!po||po.isPreview;
+  const totalClasificados=qualFirsts.length+qualSeconds.length;
 
-  html+=`<div style="font-size:12px;font-weight:500;color:var(--pink);margin-bottom:8px;">Clasificados actuales (${qualFirsts.length+qualSeconds.length}/${cfg.total})</div>`;
+  html+=`<div class="ibar">Modo de clasificación elegido para esta categoría: <strong>${CLASIF_LABELS[clasificacionMode[cat]]}</strong> (se cambia desde la pestaña "Clasificación").</div>`;
+  html+=`<div style="font-size:12px;font-weight:500;color:var(--pink);margin-bottom:8px;">Clasificados actuales (${totalClasificados}/${cfg.total})</div>`;
   html+=`<div class="grupo"><div class="table-scroll"><table class="grupo-table"><thead><tr><th>#</th><th class="thl">Pareja</th><th>Grupo</th><th>Vía</th></tr></thead><tbody>`;
-  [...qualFirsts,...qualSeconds].forEach((s,i)=>{
+  [...qualFirsts,...qualSeconds].slice(0,cfg.total).forEach((s,i)=>{
     const shade=i%2===1;
     html+=`<tr class="${shade?'shade':''}"><td><span class="pos-badge ${i<qualFirsts.length?'pos-1':'pos-2'}">${i+1}</span></td><td class="tdl"><div class="pnames"><span>${s.j1}</span><span>${s.j2}</span></div></td><td>${s.grupoId}</td><td>${i<qualFirsts.length?'1°':'Mejor 2°'}</td></tr>`;
   });
   html+=`</tbody></table></div></div>`;
 
-  if(qualFirsts.length+qualSeconds.length<cfg.total){
-    html+=`<div class="ibar" style="margin-top:10px;">Todavía faltan resultados de grupos para completar los ${cfg.total} clasificados.</div>`;
+  if(totalClasificados<cfg.total){
+    html+=`<div class="ibar" style="margin-top:10px;">Todavía faltan resultados de grupos para completar los ${cfg.total} clasificados que necesita este formato de playoff.</div>`;
+  }else if(totalClasificados>cfg.total){
+    html+=`<div class="ibar" style="margin-top:10px;background:#fffbeb;border-color:#fde047;color:#854d0e;">⚠️ El modo de clasificación elegido (${CLASIF_LABELS[clasificacionMode[cat]]}) da ${totalClasificados} clasificados, pero el formato de playoff (${cfg.roundName}) solo tiene ${cfg.total} cupos. Para el cuadro solo se van a usar los primeros ${cfg.total} por orden de mérito (se ven resaltados arriba). Revisá si el formato de playoff y el modo de clasificación son coherentes entre sí.</div>`;
   }
 
   html+=`<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">
@@ -1754,12 +1871,16 @@ function seedPositionsForBracket(n){
 
 function buildRoundsForMode(cat,seedsData){
   const cfg=getPlayoffConfig(cat);
-  const{firsts,seconds}=seedsData; // ya ordenados por desempeño, sin recortar
+  // Usamos las listas YA filtradas según el modo de clasificación elegido
+  // en la pestaña "Clasificación" (todos los 1ros, o 1ros + N mejores 2dos),
+  // en vez de recortar artificialmente a la mitad del cuadro de playoff.
+  const qualFirsts=seedsData.qualFirsts||[];
+  const qualSeconds=seedsData.qualSeconds||[];
   const slotsNeeded=cfg.total/2; // cantidad de cruces 1ro-vs-2do en la primera ronda
 
   const pairs=buildFirstVsSecondPairing(
-    firsts.slice(0,slotsNeeded),
-    seconds.slice(0,slotsNeeded)
+    qualFirsts.slice(0,slotsNeeded),
+    qualSeconds.slice(0,slotsNeeded)
   );
 
   const order=seedPositionsForBracket(slotsNeeded);
