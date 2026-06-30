@@ -449,7 +449,7 @@ function renderPublicView(cat,subTab,targetElId){
     });
     html+=`</tbody></table></div>`;
     if(sorteoEnGrupo) html+=`<div class="cnote" style="color:#854d0e;background:#fffbeb;">⚠️ Empate exacto en el límite de clasificación — se define por sorteo.</div>`;
-    html+=`<div class="cnote">🎾 ${CLASIF_LABELS[clasificacionMode[cat]]} clasifican${clasifInfo.usaRankingSegundos?` (2do compite por los mejores segundos para ${playoffMode[cat]})`:''}.</div><div class="legend-bar"><strong>Pts</strong>: puntos  ·  <strong>G</strong>: ganados  ·  <strong>P</strong>: perdidos  ·  <strong>GG</strong>: games ganados  ·  <strong>GP</strong>: games perdidos  ·  <strong>Dif</strong>: diferencia</div>${tiebreakLegendHtml()}</div>`;
+    html+=`<div class="cnote">🎾 <strong>Clasificación:</strong> ${CLASIF_LABELS[clasificacionMode[cat]]}</div><div class="legend-bar"><strong>Pts</strong>: puntos  ·  <strong>G</strong>: ganados  ·  <strong>P</strong>: perdidos  ·  <strong>GG</strong>: games ganados  ·  <strong>GP</strong>: games perdidos  ·  <strong>Dif</strong>: diferencia</div>${tiebreakLegendHtml()}</div>`;
     html+=renderMatrixTable(g,cat);
   });
 
@@ -840,7 +840,26 @@ function renderSectionResults(cat){
 
 function renderResInput(m){
   const n1=pJ1(m.p1), n2=pJ1(m.p2), n1b=pJ2(m.p1), n2b=pJ2(m.p2);
-  return `<div class="sched-card"><div class="sched-card-hdr">Grupo ${m.grupoId}</div><div class="sched-card-body"><div class="res-container"><div class="res-grid-row res-header-row"><div></div><div class="res-name">${n1}<br><span style="font-size:11px;color:var(--gray);">${n1b}</span></div><div></div><div class="res-name">${n2}<br><span style="font-size:11px;color:var(--gray);">${n2b}</span></div></div><div class="res-grid-row"><div class="res-label">SET 1</div><div class="res-input-wrap"><input type="number" id="s1a_${m.id}" min="0" max="9" placeholder=""></div><div class="res-divider">|</div><div class="res-input-wrap"><input type="number" id="s1b_${m.id}" min="0" max="9" placeholder=""></div></div></div><button class="btn btn-pink btn-sm btn-full" style="margin-top:16px;" onclick="saveRes('${m.id}')">Confirmar</button></div></div>`;
+  return `<div class="sched-card">
+    <div class="sched-card-hdr">Grupo ${m.grupoId}</div>
+    <div class="sched-card-body">
+      <div class="res-container">
+        <div class="res-grid-row res-header-row">
+          <div></div>
+          <div class="res-name">${n1}<br><span style="font-size:11px;color:var(--gray);">${n1b}</span></div>
+          <div></div>
+          <div class="res-name">${n2}<br><span style="font-size:11px;color:var(--gray);">${n2b}</span></div>
+        </div>
+        <div class="res-grid-row">
+          <div class="res-label">SET 1</div>
+          <div class="res-input-wrap"><input type="number" id="s1a_${m.id}" min="0" max="9" placeholder=""></div>
+          <div class="res-divider">|</div>
+          <div class="res-input-wrap"><input type="number" id="s1b_${m.id}" min="0" max="9" placeholder=""></div>
+        </div>
+      </div>
+      <button class="btn btn-pink btn-sm btn-full" style="margin-top:16px;" onclick="saveRes('${m.id}')">Confirmar</button>
+    </div>
+  </div>`;
 }
 
 function renderResDone(m){
@@ -915,7 +934,21 @@ function renderSectionPlayoff(cat){
           html+=`<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;background:#fff;border:1px solid #eee;border-radius:8px;font-size:12px;flex-wrap:wrap;gap:6px;"><span><span style="color:var(--pink);font-weight:500;">${w1>w2?pNombre(m.p1):pNombre(m.p2)}</span> — ${m.sets.map(s=>s[0]+'-'+s[1]).join(' ')}</span><button class="btn btn-red btn-sm" onclick="delPO('${cat}',${ri},${mi})">Borrar</button></div>`;
         }else{
           const n1=m.p1?pNombre(m.p1):'Pareja A', n2=m.p2?pNombre(m.p2):'Pareja B';
-          html+=`<div class="res-container"><div class="res-grid-row res-header-row"><div></div><div class="res-name" style="font-size:13px;">${n1}</div><div></div><div class="res-name" style="font-size:13px;">${n2}</div></div><div class="res-grid-row"><div class="res-label">SET 1</div><div class="res-input-wrap"><input type="number" id="po_s1a_${ri}_${mi}" min="0" max="9" placeholder=""></div><div class="res-divider">|</div><div class="res-input-wrap"><input type="number" id="po_s1b_${ri}_${mi}" min="0" max="9" placeholder=""></div></div></div><button class="btn btn-pink btn-sm btn-full" style="margin-top:16px;" onclick="savePO('${cat}',${ri},${mi})">Confirmar</button>`;
+          html+=`<div class="res-container">
+            <div class="res-grid-row res-header-row">
+              <div></div>
+              <div class="res-name" style="font-size:13px;">${n1}</div>
+              <div></div>
+              <div class="res-name" style="font-size:13px;">${n2}</div>
+            </div>
+            <div class="res-grid-row">
+              <div class="res-label">SET 1</div>
+              <div class="res-input-wrap"><input type="number" id="po_s1a_${ri}_${mi}" min="0" max="9" placeholder=""></div>
+              <div class="res-divider">|</div>
+              <div class="res-input-wrap"><input type="number" id="po_s1b_${ri}_${mi}" min="0" max="9" placeholder=""></div>
+            </div>
+          </div>
+          <button class="btn btn-pink btn-sm btn-full" style="margin-top:16px;" onclick="savePO('${cat}',${ri},${mi})">Confirmar</button>`;
         }
         html+=`</div>`;
       });
