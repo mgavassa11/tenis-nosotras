@@ -43,6 +43,21 @@ let playoffData={"1era":null,"2da":null,"3era":null};
 let playoffMode={"1era":"semis","2da":"cuartos","3era":"cuartos"};
 let tiebreakOrder=["pts","bal","gg","h2h"];
 let reglamentoText="";
+// Modo de clasificación por categoría:
+// "1ros"        -> solo todos los 1ros
+// "1ros_2dos"   -> todos los 1ros y todos los 2dos
+// "1ro_mejor1"  -> todos los 1ros + el mejor 2do de la totalidad de los grupos
+// "1ro_mejor2"  -> todos los 1ros + los 2 mejores 2dos de la totalidad de los grupos
+// "1ro_mejor3"  -> todos los 1ros + los 3 mejores 2dos de la totalidad de los grupos
+let clasificacionMode={"1era":"1ro_mejor1","2da":"1ro_mejor1","3era":"1ro_mejor1"};
+
+const CLASIF_LABELS={
+  "1ros":"Todos los 1º",
+  "1ros_2dos":"Todos los 1º y 2º",
+  "1ro_mejor1":"Todos los 1º y el mejor 2º",
+  "1ro_mejor2":"Todos los 1º y los 2 mejores 2º",
+  "1ro_mejor3":"Todos los 1º y los 3 mejores 2º",
+};
 
 const state={
   mainView:"jugadoras",
@@ -136,7 +151,8 @@ async function seedInitialData(){
 
   await supabaseClient.from('configuracion').insert([
     {clave:'playoff_mode',valor:{"1era":"semis","2da":"cuartos","3era":"cuartos"}},
-    {clave:'tiebreak_order',valor:["pts","bal","gg","h2h"]}
+    {clave:'tiebreak_order',valor:["pts","bal","gg","h2h"]},
+    {clave:'clasificacion_mode',valor:{"1era":"1ro_mejor1","2da":"1ro_mejor1","3era":"1ro_mejor1"}}
   ]);
 }
 
@@ -182,6 +198,7 @@ async function loadAllData(){
     if(row.clave==='playoff_mode') playoffMode={...playoffMode,...row.valor};
     if(row.clave==='tiebreak_order') tiebreakOrder=row.valor;
     if(row.clave==='reglamento') reglamentoText=row.valor||'';
+    if(row.clave==='clasificacion_mode') clasificacionMode={...clasificacionMode,...row.valor};
   });
 
   ["1era","2da","3era"].forEach(c=>{
@@ -202,7 +219,24 @@ function getPlayoffConfig(cat){
   if(mode==='semis') return{total:4,roundName:'semis'};
   return{total:8,roundName:'cuartos'};
 }
-function getCutPos(){return 1;}
+// Cuántas posiciones por grupo clasifican SIEMPRE (línea de corte fija):
+// 1 para todos los modos salvo "1ros_2dos" donde clasifican los 2 primeros.
+function getCutPos(cat){
+  const mode=clasificacionMode[cat];
+  if(mode==='1ros_2dos')return 2;
+  return 1;
+}
+// Cuántos cupos de "mejor 2do" hay en total según el modo elegido.
+// null significa "todos los segundos" (no hay ranking, todos clasifican).
+function getCuposMejoresSegundos(cat){
+  const mode=clasificacionMode[cat];
+  if(mode==='1ros')return 0;
+  if(mode==='1ros_2dos')return null; // todos los segundos clasifican, sin ranking
+  if(mode==='1ro_mejor1')return 1;
+  if(mode==='1ro_mejor2')return 2;
+  if(mode==='1ro_mejor3')return 3;
+  return 1;
+}
 
 function getStatsRaw(gId,cat){
   const g=grupos[cat].find(g=>g.id===gId);if(!g)return[];
@@ -327,12 +361,30 @@ function getAdj(p,gId,cat){
 // 2. Diferencia de games (balance)
 // 3. Games ganados
 // 4. Games perdidos (menos es mejor)
+// 5. Si los 4 criterios anteriores son exactamente iguales: sorteo
 // ====================================================
 function compararMejoresSegundos(a,b){
   if(a.pts!==b.pts)return b.pts-a.pts;
   if(a.bal!==b.bal)return b.bal-a.bal;
   if(a.gg!==b.gg)return b.gg-a.gg;
-  return a.gp-b.gp; // menos games perdidos es mejor
+  if(a.gp!==b.gp)return a.gp-b.gp; // menos games perdidos es mejor
+  return 0; // empate total en los 4 criterios: se resuelve después por sorteo
+}
+// Ordena una lista completa aplicando los 4 criterios y, para los bloques
+// que terminen exactamente empatados en los 4, aplica sorteo (mismo criterio
+// estable que usamos para el desempate dentro de los grupos).
+function ordenarMejoresConSorteo(lista){
+  const ordenada=[...lista].sort(compararMejoresSegundos);
+  let resultado=[];
+  let i=0;
+  while(i<ordenada.length){
+    let j=i+1;
+    while(j<ordenada.length&&compararMejoresSegundos(ordenada[i],ordenada[j])===0)j++;
+    const bloque=ordenada.slice(i,j);
+    resultado=resultado.concat(bloque.length>1?ordenSorteo(bloque):bloque);
+    i=j;
+  }
+  return resultado;
 }
 function getSeeds(cat){
   const cfg=getPlayoffConfig(cat);
@@ -342,14 +394,14 @@ function getSeeds(cat){
     if(st[0])firsts.push({...st[0],rank:1,grupoId:g.id});
     if(st[1])seconds.push({...getAdj(st[1],g.id,cat),rank:2,grupoId:g.id});
   });
-  firsts.sort(compararMejoresSegundos);
-  seconds.sort(compararMejoresSegundos);
+  const firstsOrdenados=ordenarMejoresConSorteo(firsts);
+  const secondsOrdenados=ordenarMejoresConSorteo(seconds);
   // El cuadro siempre enfrenta 1ro vs 2do, así que necesitamos la mitad de
   // cupos para primeros y la otra mitad para segundos (los mejores de cada lista).
   const half=cfg.total/2;
-  const qF=firsts.slice(0,half);
-  const qS=seconds.slice(0,half);
-  return{firsts,seconds,qualFirsts:qF,qualSeconds:qS,cfg};
+  const qF=firstsOrdenados.slice(0,half);
+  const qS=secondsOrdenados.slice(0,half);
+  return{firsts:firstsOrdenados,seconds:secondsOrdenados,qualFirsts:qF,qualSeconds:qS,cfg};
 }
 function getChampion(cat){
   const po=playoffData[cat];
@@ -357,6 +409,47 @@ function getChampion(cat){
   const fr=po.rounds[po.rounds.length-1];
   if(!fr||!fr.matches[0]?.winner)return null;
   return fr.matches[0].winner;
+}
+
+// ====================================================
+// CLASIFICACIÓN VISUAL (líneas de corte y notas), independiente del
+// armado del cuadro de playoff. Devuelve, para cada grupo, en qué
+// posición termina la línea de corte de "clasificados directos" (1° o
+// 1°+2°), y si hace falta el ranking de mejores segundos, devuelve
+// también el set de ids que efectivamente clasifican ahí y si hay un
+// empate sin resolver en el límite (para mostrar la nota de sorteo).
+// ====================================================
+function getClasificacionInfo(cat){
+  const mode=clasificacionMode[cat];
+  const cutPos=getCutPos(cat); // 1 o 2
+  const cupos=getCuposMejoresSegundos(cat); // null=todos, o 0/1/2/3
+
+  // Si el modo es "1ros" (cupos=0) o "1ros_2dos" (cupos=null, todos clasifican),
+  // no hay ranking de mejores segundos que mostrar.
+  const usaRankingSegundos = mode==='1ro_mejor1'||mode==='1ro_mejor2'||mode==='1ro_mejor3';
+
+  let secondsIds=new Set();
+  let empateEnLimite=false;
+  if(usaRankingSegundos){
+    const seconds=[];
+    grupos[cat].forEach(g=>{
+      const st=getStats(g.id,cat);
+      if(st[1])seconds.push({...getAdj(st[1],g.id,cat),grupoId:g.id});
+    });
+    const ordenados=ordenarMejoresConSorteo(seconds);
+    const tomados=ordenados.slice(0,cupos);
+    tomados.forEach(s=>secondsIds.add(s.id));
+    // Detectar si hay empate exacto sin resolver justo en el límite del corte
+    // (comparamos la última que entra contra la primera que queda afuera).
+    if(ordenados.length>cupos){
+      const ultimaQueEntra=ordenados[cupos-1];
+      const primeraQueQuedaAfuera=ordenados[cupos];
+      if(ultimaQueEntra&&primeraQueQuedaAfuera&&compararMejoresSegundos(ultimaQueEntra,primeraQueQuedaAfuera)===0){
+        empateEnLimite=true;
+      }
+    }
+  }
+  return{cutPos,cupos,usaRankingSegundos,secondsIds,empateEnLimite};
 }
 function getSched(matchId){return matchSchedule[matchId]||{cancha:'',hora:'',after:false,afterMatchId:''};}
 
@@ -567,17 +660,42 @@ function renderPublicView(cat,subTab,targetElId){
   }
 
   // ZONA DE GRUPOS DEBAJO
+  const clasifInfo=getClasificacionInfo(cat);
   html+=`<div class="phase-label" style="margin-top:${playoffData[cat]?'1.8rem':'0'};">Zona de grupos</div>`;
   grupos[cat].forEach(g=>{
     const stats=getStats(g.id,cat);
-    const cut=getCutPos();
+    let cutPos=clasifInfo.cutPos;
+    // Si hay 2+ parejas empatadas exactamente en el límite del corte propio
+    // del grupo (mismo Pts, Dif, GG y GP que la pareja en la posición de
+    // corte), movemos la línea para abarcarlas a todas y avisamos que ese
+    // tramo se define por sorteo dentro del grupo.
+    let sorteoEnGrupo=false;
+    if(stats.length>cutPos){
+      const limite=stats[cutPos-1];
+      let finBloque=cutPos;
+      while(finBloque<stats.length &&
+            stats[finBloque].pts===limite.pts &&
+            stats[finBloque].bal===limite.bal &&
+            stats[finBloque].gg===limite.gg &&
+            stats[finBloque].gp===limite.gp){
+        finBloque++;
+      }
+      if(finBloque>cutPos){
+        cutPos=finBloque;
+        sorteoEnGrupo=true;
+      }
+    }
     html+=`<div class="grupo">
       <div class="grupo-header">Grupo ${g.id} · ${g.parejas.length} parejas</div>
       <div class="table-scroll"><table class="grupo-table">
         <thead><tr><th style="width:26px">#</th><th class="thl">Pareja</th><th>Pts</th><th>G</th><th>P</th><th>GG</th><th>GP</th><th>Dif</th></tr></thead>
         <tbody>`;
     stats.forEach((p,i)=>{
-      const shade=i%2===1,isCut=i===cut-1;
+      const shade=i%2===1,isCut=i===cutPos-1;
+      // Además del corte de clasificación directa, marcamos también si esta
+      // pareja (siendo 2da o peor) es una de las que efectivamente clasificó
+      // como "mejor 2do" según el ranking general — útil cuando cutPos===1
+      // pero hay más de un cupo de mejores segundos.
       html+=`<tr class="${shade?'shade':''} ${isCut?'cut-row':''}">
         <td><span class="pos-badge pos-${i+1}">${i+1}</span></td>
         <td class="tdl"><div class="pnames"><span>${p.j1}</span><span>${p.j2}</span></div></td>
@@ -586,7 +704,10 @@ function renderPublicView(cat,subTab,targetElId){
       </tr>`;
     });
     html+=`</tbody></table></div>`;
-    const note=`🎾 1ro clasifica directo. 2do compite por los mejores segundos para ${playoffMode[cat]}.`;
+    if(sorteoEnGrupo){
+      html+=`<div class="cnote" style="color:#854d0e;background:#fffbeb;">⚠️ Empate exacto en el límite de clasificación de este grupo — se define por sorteo.</div>`;
+    }
+    const note=`🎾 ${CLASIF_LABELS[clasificacionMode[cat]]} clasifican${clasifInfo.usaRankingSegundos?` (2do compite por los mejores segundos para ${playoffMode[cat]})`:''}.`;
     html+=`<div class="cnote">${note}</div>
       <div class="legend-bar"><strong>Pts</strong>: puntos (3 x victoria) &nbsp;·&nbsp; <strong>G</strong>: ganados &nbsp;·&nbsp; <strong>P</strong>: perdidos &nbsp;·&nbsp; <strong>GG</strong>: games ganados &nbsp;·&nbsp; <strong>GP</strong>: games perdidos &nbsp;·&nbsp; <strong>Dif</strong>: diferencia de games (GG-GP)</div>
       ${tiebreakLegendHtml()}
@@ -594,33 +715,35 @@ function renderPublicView(cat,subTab,targetElId){
     html+=renderMatrixTable(g,cat);
   });
 
-  if(seconds.length&&cat!=="1era"){
-    const needed=cfg.total-firsts.length;
-    if(needed>0){
-      html+=`<div class="phase-label" style="margin-top:1.5rem;">Ranking mejores 2dos</div>`;
-      html+=`<div class="grupo"><div class="grupo-header">Ranking 2dos puestos</div>
-        <div class="table-scroll"><table class="grupo-table">
-          <thead><tr><th>#</th><th class="thl">Pareja</th><th>Grupo</th><th>Pts</th><th>GG</th><th>GP</th><th>Dif</th></tr></thead><tbody>`;
-      seconds.forEach((s,i)=>{
-        const shade=i%2===1,cl=i<needed,isCut=i===needed-1&&needed<seconds.length;
-        html+=`<tr class="${shade?'shade':''} ${isCut?'cut-row':''}">
-          <td><span class="pos-badge ${cl?'pos-1':''}">${i+1}</span></td>
-          <td class="tdl"><div class="pnames"><span>${s.j1}</span><span>${s.j2}</span></div></td>
-          <td>${s.grupoId}</td><td>${s.pts}</td><td>${s.gg}</td><td>${s.gp}</td><td>${s.bal>0?'+':''}${s.bal}</td>
-        </tr>`;
-      });
-      html+=`</tbody></table></div>
-        <div class="cnote">Todos los segundos clasifican si el número de grupos lo permite. En grupos de 4, las stats se comparan directo.</div>
-        <div class="legend-bar">
-          <strong>Cómo se rompe el empate entre segundos:</strong><br>
-          1° criterio: más <strong>Pts</strong> (puntos obtenidos en su grupo).<br>
-          2° criterio (si persiste el empate en puntos): mejor <strong>Dif</strong> (diferencia de games ganados menos perdidos).<br>
-          3° criterio (si persiste el empate en diferencia): más <strong>GG</strong> (total de games ganados).<br>
-          4° criterio (si persiste el empate en GG): menos <strong>GP</strong> (total de games perdidos).<br>
-          En grupos de 5 parejas, las estadísticas del 2do se calculan excluyendo el partido contra la última pareja del grupo, para comparar en igualdad de partidos jugados con los segundos de grupos de 4.
-        </div>
-      </div>`;
+  if(clasifInfo.usaRankingSegundos&&seconds.length){
+    const needed=clasifInfo.cupos;
+    html+=`<div class="phase-label" style="margin-top:1.5rem;">Ranking mejores 2dos</div>`;
+    html+=`<div class="grupo"><div class="grupo-header">Ranking 2dos puestos</div>
+      <div class="table-scroll"><table class="grupo-table">
+        <thead><tr><th>#</th><th class="thl">Pareja</th><th>Grupo</th><th>Pts</th><th>GG</th><th>GP</th><th>Dif</th></tr></thead><tbody>`;
+    seconds.forEach((s,i)=>{
+      const shade=i%2===1,cl=i<needed,isCut=i===needed-1&&needed<seconds.length;
+      html+=`<tr class="${shade?'shade':''} ${isCut?'cut-row':''}">
+        <td><span class="pos-badge ${cl?'pos-1':''}">${i+1}</span></td>
+        <td class="tdl"><div class="pnames"><span>${s.j1}</span><span>${s.j2}</span></div></td>
+        <td>${s.grupoId}</td><td>${s.pts}</td><td>${s.gg}</td><td>${s.gp}</td><td>${s.bal>0?'+':''}${s.bal}</td>
+      </tr>`;
+    });
+    html+=`</tbody></table></div>`;
+    if(clasifInfo.empateEnLimite){
+      html+=`<div class="cnote" style="color:#854d0e;background:#fffbeb;">⚠️ Empate exacto en el límite de clasificación entre mejores segundos — se define por sorteo.</div>`;
     }
+    html+=`<div class="cnote">${clasifInfo.cupos===1?'Clasifica el mejor segundo de la totalidad de los grupos.':`Clasifican los ${clasifInfo.cupos} mejores segundos de la totalidad de los grupos.`}</div>
+      <div class="legend-bar">
+        <strong>Cómo se rompe el empate entre segundos:</strong><br>
+        1° criterio: más <strong>Pts</strong> (puntos obtenidos en su grupo).<br>
+        2° criterio (si persiste el empate en puntos): mejor <strong>Dif</strong> (diferencia de games ganados menos perdidos).<br>
+        3° criterio (si persiste el empate en diferencia): más <strong>GG</strong> (total de games ganados).<br>
+        4° criterio (si persiste el empate en GG): menos <strong>GP</strong> (total de games perdidos).<br>
+        5° criterio (si los 4 anteriores son exactamente iguales): sorteo.<br>
+        En grupos de 5 parejas, las estadísticas del 2do se calculan excluyendo el partido contra la última pareja del grupo, para comparar en igualdad de partidos jugados con los segundos de grupos de 4.
+      </div>
+    </div>`;
   }
 
   el.innerHTML=html||'<div class="empty">No hay datos.</div>';
@@ -840,6 +963,7 @@ function renderA(){
     <button class="pill-sm ${state.adminSection==='pairs'?'active':''}" onclick="switchAdminSection('pairs')">Parejas y grupos</button>
     <button class="pill-sm ${state.adminSection==='sched'?'active':''}" onclick="switchAdminSection('sched')">Canchas y horarios</button>
     <button class="pill-sm ${state.adminSection==='results'?'active':''}" onclick="switchAdminSection('results')">Resultados</button>
+    <button class="pill-sm ${state.adminSection==='clasificacion'?'active':''}" onclick="switchAdminSection('clasificacion')">Clasificación</button>
     <button class="pill-sm ${state.adminSection==='playoff'?'active':''}" onclick="switchAdminSection('playoff')">Playoff</button>
     <button class="pill-sm ${state.adminSection==='tiebreak'?'active':''}" onclick="switchAdminSection('tiebreak')">Desempate</button>
     <button class="pill-sm ${state.adminSection==='reglamento'?'active':''}" onclick="switchAdminSection('reglamento')">Reglamento</button>
@@ -874,12 +998,43 @@ function renderAContent(){
   else if(state.adminSection==='sched') html=renderSectionSched();
   else if(state.adminSection==='results') html=renderSectionResults(cat);
   else if(state.adminSection==='playoff') html=renderSectionPlayoff(cat);
+  else if(state.adminSection==='clasificacion') html=renderSectionClasificacion(cat);
   else if(state.adminSection==='tiebreak') html=renderSectionTiebreak();
   else if(state.adminSection==='reglamento') html=renderSectionReglamento();
   document.getElementById('acontent').innerHTML=html;
 }
 function switchLiveCat(c){state.liveCat=c;renderA();}
 function switchLiveSub(s){state.liveSubTab=s;renderA();}
+
+// ====================================================
+// CLASIFICACIÓN (qué parejas avanzan a playoff por categoría)
+// ====================================================
+function renderSectionClasificacion(cat){
+  const mode=clasificacionMode[cat];
+  let html=`<div class="ibar">Elegí cómo se define la clasificación a playoff para esta categoría. Esto determina cuántas parejas por grupo pasan directo y si hay ranking de mejores segundos.</div>`;
+  html+=`<div class="tb-order-list">`;
+  Object.keys(CLASIF_LABELS).forEach(key=>{
+    const active=mode===key;
+    html+=`<div class="tb-order-item" style="cursor:pointer;${active?'border-color:var(--pink);background:var(--pink-bg);':''}" onclick="setClasificacionMode('${cat}','${key}')">
+      <div class="num" style="${active?'':'background:#e5e7eb;color:#555;'}">${active?'✓':''}</div>
+      <div class="label">${CLASIF_LABELS[key]}</div>
+    </div>`;
+  });
+  html+=`</div>`;
+  html+=`<div class="legend-bar">
+    <strong>Todos los 1º:</strong> solo clasifican los primeros de cada grupo.<br>
+    <strong>Todos los 1º y 2º:</strong> clasifican primeros y segundos de todos los grupos, sin ranking entre segundos.<br>
+    <strong>Todos los 1º y el mejor 2º:</strong> clasifican todos los primeros, y de los segundos, solo el mejor de la totalidad de los grupos.<br>
+    <strong>Todos los 1º y los 2/3 mejores 2º:</strong> igual que el anterior, pero con 2 o 3 cupos de segundos en vez de 1.<br><br>
+    Importante: el formato del cuadro de playoff (cuartos o semis, en la pestaña "Playoff") sigue siendo independiente de esta elección — esta pestaña define quién aparece marcado como clasificado en las tablas, mientras que el cuadro de playoff se sigue armando con la cantidad de cupos que necesite según el formato elegido ahí.
+  </div>`;
+  return html;
+}
+async function setClasificacionMode(cat,mode){
+  clasificacionMode[cat]=mode;
+  await supabaseClient.from('configuracion').upsert({clave:'clasificacion_mode',valor:clasificacionMode});
+  renderA();renderJContent();showToast('Modo de clasificación actualizado');
+}
 
 function renderSectionTiebreak(){
   let html=`<div class="ibar">Estos son los criterios de desempate fijos que aplica el sistema. No son editables porque siguen el reglamento oficial de la liga.</div>`;
@@ -903,6 +1058,7 @@ function renderSectionTiebreak(){
     <div class="tb-order-item"><div class="num">2</div><div class="label">Diferencia de games</div></div>
     <div class="tb-order-item"><div class="num">3</div><div class="label">Games ganados</div></div>
     <div class="tb-order-item"><div class="num">4</div><div class="label">Games perdidos (menos es mejor)</div></div>
+    <div class="tb-order-item"><div class="num">5</div><div class="label">Si los 4 anteriores son exactamente iguales: sorteo</div></div>
   </div>`;
   html+=`<div class="legend-bar">Se usa cuando hay que comparar los segundos puestos de distintos grupos entre sí. No incluye cara a cara porque esas parejas no se enfrentaron en la fase de grupos.</div>`;
   return html;
