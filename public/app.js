@@ -913,7 +913,10 @@ function renderSectionPairs(cat){
     return '<div class="empty">Todavía no hay parejas cargadas en esta categoría.</div>';
   }
   let html=`<div class="ibar">Elegí un grupo para editar sus parejas. Podés cambiar nombres, agregar, quitar o mover una pareja a otro grupo (incluso de otra categoría).</div>`;
-  html+=`<div style="margin-bottom:12px;"><button class="btn btn-blk btn-sm" onclick="descargarParejas()">⬇ Descargar parejas actuales</button></div>`;
+  html+=`<div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
+    <button class="btn btn-blk btn-sm" onclick="descargarParejasXLSX()">⬇ Parejas actuales (.xlsx)</button>
+    <button class="btn btn-out btn-sm" onclick="descargarPlantilla()">📋 Descargar plantilla</button>
+  </div>`;
   html+=`<div class="group-select-bar">`;
   grupos[cat].forEach(g=>{
     const active=state.adminPairsGroup[cat]===g.id;
@@ -1487,9 +1490,11 @@ async function delPO(cat,ri,mi){
   renderA();renderJContent();showToast('Borrado');
 }
 
-function descargarParejas(){
+// Descarga las parejas actuales en formato Excel (.xlsx)
+function descargarParejasXLSX(){
+  if(typeof XLSX==='undefined'){showToast('Error: librería Excel no cargada');return;}
   const catLabels={"1era":"1° Categoría","2da":"2° Categoría","3era":"3° Categoría"};
-  let rows=[["Categoría","Grupo","Jugadora 1","Jugadora 2"]];
+  const rows=[["Categoría","Grupo","Jugadora 1","Jugadora 2"]];
   ["1era","2da","3era"].forEach(cat=>{
     grupos[cat].forEach(g=>{
       g.parejas.forEach(p=>{
@@ -1497,18 +1502,51 @@ function descargarParejas(){
       });
     });
   });
-  // Construir CSV
-  const csv=rows.map(r=>r.map(cell=>`"${String(cell).replace(/"/g,'""')}"`).join(",")).join("\n");
-  const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement("a");
-  a.href=url;
-  a.download="parejas_torneo.csv";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  showToast("Archivo descargado ✓");
+  const ws=XLSX.utils.aoa_to_sheet(rows);
+  // Ancho de columnas
+  ws['!cols']=[{wch:18},{wch:12},{wch:28},{wch:28}];
+  // Estilo de cabecera (negrita)
+  const range=XLSX.utils.decode_range(ws['!ref']);
+  for(let c=range.s.c;c<=range.e.c;c++){
+    const cell=ws[XLSX.utils.encode_cell({r:0,c})];
+    if(cell) cell.s={font:{bold:true}};
+  }
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"Parejas");
+  XLSX.writeFile(wb,"parejas_torneo.xlsx");
+  showToast("Excel descargado ✓");
+}
+
+// Descarga una plantilla de ejemplo vacía para cargar nuevas parejas
+function descargarPlantilla(){
+  if(typeof XLSX==='undefined'){showToast('Error: librería Excel no cargada');return;}
+  const rows=[
+    ["Categoría","Grupo","Jugadora 1","Jugadora 2"],
+    ["1° Categoría","Grupo 1A","Nombre Apellido","Nombre Apellido"],
+    ["1° Categoría","Grupo 1A","Nombre Apellido","Nombre Apellido"],
+    ["1° Categoría","Grupo 1B","Nombre Apellido","Nombre Apellido"],
+    ["2° Categoría","Grupo 2A","Nombre Apellido","Nombre Apellido"],
+    ["3° Categoría","Grupo 3A","Nombre Apellido","Nombre Apellido"],
+  ];
+  const ws=XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols']=[{wch:18},{wch:12},{wch:28},{wch:28}];
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"Plantilla");
+  // Segunda hoja con instrucciones
+  const instrRows=[
+    ["INSTRUCCIONES"],
+    [""],
+    ["1. Completá la hoja 'Plantilla' con los datos de las parejas."],
+    ["2. Categoría: usá exactamente '1° Categoría', '2° Categoría' o '3° Categoría'."],
+    ["3. Grupo: usá el formato 'Grupo 1A', 'Grupo 2B', etc."],
+    ["4. Cada fila es una pareja (Jugadora 1 y Jugadora 2)."],
+    ["5. No modifiques la fila de encabezados (fila 1)."],
+  ];
+  const wsI=XLSX.utils.aoa_to_sheet(instrRows);
+  wsI['!cols']=[{wch:60}];
+  XLSX.utils.book_append_sheet(wb,wsI,"Instrucciones");
+  XLSX.writeFile(wb,"plantilla_parejas.xlsx");
+  showToast("Plantilla descargada ✓");
 }
 
 function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200);}
