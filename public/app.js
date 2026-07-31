@@ -916,7 +916,10 @@ function renderSectionPairs(cat){
   html+=`<div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
     <button class="btn btn-blk btn-sm" onclick="descargarParejasXLSX()">⬇ Parejas actuales (.xlsx)</button>
     <button class="btn btn-out btn-sm" onclick="descargarPlantilla()">📋 Descargar plantilla</button>
-  </div>`;
+    <button class="btn btn-grn btn-sm" onclick="document.getElementById('importFileInput').click()">📤 Importar parejas</button>
+    <input type="file" id="importFileInput" accept=".xlsx,.xls" style="display:none;" onchange="importarParejas(this)">
+  </div>
+  <div class="ibar" style="background:#fffbeb;border-color:#fde047;color:#854d0e;">⚠️ <strong>Importar reemplaza TODO:</strong> borra las parejas, resultados y playoffs actuales, y carga las del archivo. Descargá primero un respaldo con "Parejas actuales".</div>`;
   html+=`<div class="group-select-bar">`;
   grupos[cat].forEach(g=>{
     const active=state.adminPairsGroup[cat]===g.id;
@@ -1488,6 +1491,137 @@ async function delPO(cat,ri,mi){
   const m=playoffData[cat].rounds[ri].matches[mi];m.sets=[];m.winner=null;
   await savePlayoffToDB(cat);
   renderA();renderJContent();showToast('Borrado');
+}
+
+// Importa parejas desde un archivo Excel y reemplaza TODO el torneo
+async function importarParejas(inputEl){
+  const file=inputEl.files&&inputEl.files[0];
+  inputEl.value=''; // reset para poder re-subir el mismo archivo
+  if(!file)return;
+  if(typeof XLSX==='undefined'){showToast('Error: librería Excel no cargada');return;}
+
+  // Mapeo de etiquetas de categoría del Excel a las claves internas
+  const catKeyFromLabel=(raw)=>{
+    const t=String(raw||'').toLowerCase().trim();
+    if(t.includes('1')||t.startsWith('primera')||t.startsWith('1ra')||t.startsWith('1era'))return '1era';
+    if(t.includes('2')||t.startsWith('segunda')||t.startsWith('2da'))return '2da';
+    if(t.includes('3')||t.startsWith('tercera')||t.startsWith('3ra')||t.startsWith('3era'))return '3era';
+    return null;
+  };
+  // Normaliza el id de grupo: "Grupo 1A" → "1A", "1a" → "1A"
+  const normGrupo=(raw)=>{
+    let t=String(raw||'').trim();
+    t=t.replace(/grupo/i,'').trim();
+    return t.toUpperCase();
+  };
+
+  try{
+    const data=await file.arrayBuffer();
+    const wb=XLSX.read(data,{type:'array'});
+    // Buscar la hoja "Plantilla" o "Parejas", si no la primera
+    let sheetName=wb.SheetNames.find(n=>/plantilla|parejas/i.test(n))||wb.SheetNames[0];
+    const ws=wb.Sheets[sheetName];
+    const rows=XLSX.utils.sheet_to_json(ws,{header:1,blankrows:false});
+    if(!rows.length){showToast('El archivo está vacío');return;}
+
+    // Detectar fila de encabezado (la primera que tenga "categor" en alguna celda)
+    let startIdx=0;
+    for(let i=0;i<Math.min(rows.length,5);i++){
+      if(rows[i].some(c=>/categor/i.test(String(c)))){startIdx=i+1;break;}
+    }
+
+    // Parsear filas → estructura de grupos
+    const nuevos={"1era":{},"2da":{},"3era":{}}; // {cat: {gid: [{j1,j2}]}}
+    let validCount=0, errorRows=[];
+    for(let i=startIdx;i<rows.length;i++){
+      const r=rows[i];
+      if(!r||r.every(c=>String(c||'').trim()===''))continue; // fila vacía
+      const cat=catKeyFromLabel(r[0]);
+      const gid=normGrupo(r[1]);
+      const j1=String(r[2]||'').trim();
+      const j2=String(r[3]||'').trim();
+      if(!cat||!gid||!j1||!j2){errorRows.push(i+1);continue;}
+      if(!nuevos[cat][gid])nuevos[cat][gid]=[];
+      nuevos[cat][gid].push({j1,j2});
+      validCount++;
+    }
+
+    if(validCount===0){
+      showToast('No se encontraron parejas válidas. Revisá el formato del archivo.');
+      return;
+    }
+
+    // Resumen para confirmar
+    let resumen=[];
+    ["1era","2da","3era"].forEach(cat=>{
+      const grupos_c=Object.keys(nuevos[cat]);
+      if(grupos_c.length){
+        const total=grupos_c.reduce((a,g)=>a+nuevos[cat][g].length,0);
+        const label=cat==='1era'?'1°':cat==='2da'?'2°':'3°';
+        resumen.push(`${label} Cat: ${total} parejas en ${grupos_c.length} grupos`);
+      }
+    });
+    let msg=`Se van a importar ${validCount} parejas:\n\n${resumen.join('\n')}`;
+    if(errorRows.length)msg+=`\n\n(Se ignoraron ${errorRows.length} filas incompletas: ${errorRows.slice(0,10).join(', ')}${errorRows.length>10?'...':''})`;
+    msg+=`\n\n⚠️ Esto BORRA todas las parejas, resultados y playoffs actuales. ¿Continuar?`;
+    if(!confirm(msg))return;
+
+    showToast('Importando... no cierres la página');
+
+    // 1. Borrar todo lo existente en la base
+    await supabaseClient.from('playoff').delete().neq('categoria','');
+    await supabaseClient.from('horarios').delete().neq('partido_id','');
+    await supabaseClient.from('partidos').delete().neq('id','');
+    await supabaseClient.from('parejas').delete().neq('id','');
+
+    // 2. Construir parejas nuevas con ids frescos
+    let pid=0;
+    const pairsToInsert=[];
+    const tempGrupos={"1era":[],"2da":[],"3era":[]};
+    ["1era","2da","3era"].forEach(cat=>{
+      Object.keys(nuevos[cat]).sort().forEach(gid=>{
+        const parejasObj=[];
+        nuevos[cat][gid].forEach(p=>{
+          const id=`p${pid++}`;
+          pairsToInsert.push({id,categoria:cat,grupo_id:gid,jugadora1:p.j1,jugadora2:p.j2,cardales:false});
+          parejasObj.push({id,j1:p.j1,j2:p.j2});
+        });
+        tempGrupos[cat].push({id:gid,parejas:parejasObj});
+      });
+    });
+    await supabaseClient.from('parejas').insert(pairsToInsert);
+
+    // 3. Generar partidos de grupo (todos contra todos)
+    const matchesToInsert=[];
+    ["1era","2da","3era"].forEach(cat=>{
+      tempGrupos[cat].forEach(g=>{
+        g.parejas.forEach((p1,i)=>{
+          g.parejas.forEach((p2,j)=>{
+            if(j<=i)return;
+            matchesToInsert.push({
+              id:`m_${g.id}_${p1.id}_${p2.id}`,
+              categoria:cat,grupo_id:g.id,pareja1_id:p1.id,pareja2_id:p2.id,
+              sets:[],jugado:false,simulado:false
+            });
+          });
+        });
+      });
+    });
+    if(matchesToInsert.length){
+      await supabaseClient.from('partidos').insert(matchesToInsert);
+    }
+
+    // 4. Recargar todo desde la base y re-renderizar
+    playoffData={"1era":null,"2da":null,"3era":null};
+    matchSchedule={};
+    await loadAllData();
+    ["1era","2da","3era"].forEach(c=>{ state.adminPairsGroup[c]=grupos[c].length?grupos[c][0].id:null; });
+    renderA();renderJContent();
+    showToast(`✓ Importadas ${validCount} parejas`);
+  }catch(e){
+    console.error('Error importando:',e);
+    showToast('Error al leer el archivo. Verificá que sea un Excel válido.');
+  }
 }
 
 // Descarga las parejas actuales en formato Excel (.xlsx)
