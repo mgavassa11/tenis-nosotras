@@ -742,6 +742,7 @@ function renderA(){
     <button class="pill-sm ${state.adminSection==='playoff'?'active':''}" onclick="switchAdminSection('playoff')">Playoff</button>
     <button class="pill-sm ${state.adminSection==='tiebreak'?'active':''}" onclick="switchAdminSection('tiebreak')">Desempate</button>
     <button class="pill-sm ${state.adminSection==='reglamento'?'active':''}" onclick="switchAdminSection('reglamento')">Reglamento</button>
+    <button class="pill-sm ${state.adminSection==='export'?'active':''}" onclick="switchAdminSection('export')">Exportar</button>
   `;
   renderAContent();
 }
@@ -775,6 +776,7 @@ function renderAContent(){
   else if(state.adminSection==='playoff') html=renderSectionPlayoff(cat);
   else if(state.adminSection==='tiebreak') html=renderSectionTiebreak();
   else if(state.adminSection==='reglamento') html=renderSectionReglamento();
+  else if(state.adminSection==='export') html=renderSectionExport();
   document.getElementById('acontent').innerHTML=html;
 }
 function switchLiveCat(c){state.liveCat=c;renderA();}
@@ -1681,6 +1683,197 @@ function descargarPlantilla(){
   XLSX.utils.book_append_sheet(wb,wsI,"Instrucciones");
   XLSX.writeFile(wb,"plantilla_parejas.xlsx");
   showToast("Plantilla descargada ✓");
+}
+
+// ====================================================
+// EXPORTAR TORNEO COMPLETO (Excel + PDF)
+// ====================================================
+function renderSectionExport(){
+  return `<div class="ibar">Descargá el torneo completo — parejas, tablas de posiciones, resultados de grupos y cruces de playoff de las 3 categorías — en el formato que prefieras.</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;">
+      <button class="btn btn-blk" onclick="exportarTorneoExcel()">📊 Descargar Excel completo</button>
+      <button class="btn btn-pink" onclick="exportarTorneoPDF()">📄 Descargar PDF completo</button>
+    </div>
+    <div class="legend-bar" style="margin-top:14px;border:1px solid #eee;border-radius:8px;">
+      <strong>El Excel</strong> incluye una hoja por categoría con posiciones, más hojas de parejas, resultados y playoff.<br>
+      <strong>El PDF</strong> arma un documento imprimible con todas las tablas ordenadas por categoría.
+    </div>`;
+}
+
+// Recolecta toda la data del torneo en una estructura reutilizable para ambos formatos
+function recolectarDatosTorneo(){
+  const catLabels={"1era":"1° Categoría","2da":"2° Categoría","3era":"3° Categoría"};
+  const out={parejas:[],posiciones:{},resultados:[],playoff:[]};
+  ["1era","2da","3era"].forEach(cat=>{
+    out.posiciones[cat]=[];
+    grupos[cat].forEach(g=>{
+      // Parejas
+      g.parejas.forEach(p=>{
+        out.parejas.push([catLabels[cat],`Grupo ${g.id}`,p.j1,p.j2]);
+      });
+      // Posiciones (tabla ordenada)
+      const stats=getStats(g.id,cat);
+      stats.forEach((p,i)=>{
+        out.posiciones[cat].push({
+          grupo:`Grupo ${g.id}`,pos:i+1,pareja:`${p.j1} / ${p.j2}`,
+          pts:p.pts,pj:p.gw+p.l,g:p.gw,pp:p.l,gg:p.gg,gp:p.gp,dif:(p.bal>0?'+':'')+p.bal
+        });
+      });
+      // Resultados de partidos jugados
+      partidos.filter(m=>m.grupoId===g.id&&m.played).forEach(m=>{
+        const score=m.sets.map(s=>`${s[0]}-${s[1]}`).join(' ');
+        out.resultados.push([catLabels[cat],`Grupo ${g.id}`,pNombre(m.p1),pNombre(m.p2),score,m.simulated?'Simulado':'Jugado']);
+      });
+    });
+    // Playoff
+    if(playoffData[cat]){
+      playoffData[cat].rounds.forEach(r=>{
+        r.matches.forEach((m,mi)=>{
+          const n1=m.p1?pNombre(m.p1):'Por definir';
+          const n2=m.p2?pNombre(m.p2):'Por definir';
+          const score=(m.sets&&m.sets.length)?m.sets.map(s=>`${s[0]}-${s[1]}`).join(' '):'—';
+          const ganador=m.winner?pNombre(m.winner):'—';
+          out.playoff.push([catLabels[cat],r.name,`Cruce ${mi+1}`,n1,n2,score,ganador]);
+        });
+      });
+    }
+  });
+  return out;
+}
+
+function exportarTorneoExcel(){
+  if(typeof XLSX==='undefined'){showToast('Error: librería Excel no cargada');return;}
+  const catLabels={"1era":"1° Categoría","2da":"2° Categoría","3era":"3° Categoría"};
+  const d=recolectarDatosTorneo();
+  const wb=XLSX.utils.book_new();
+
+  // Hoja 1: Parejas
+  const wsP=XLSX.utils.aoa_to_sheet([["Categoría","Grupo","Jugadora 1","Jugadora 2"],...d.parejas]);
+  wsP['!cols']=[{wch:16},{wch:12},{wch:26},{wch:26}];
+  XLSX.utils.book_append_sheet(wb,wsP,"Parejas");
+
+  // Una hoja de posiciones por categoría
+  ["1era","2da","3era"].forEach(cat=>{
+    if(!d.posiciones[cat].length)return;
+    const rows=[["Grupo","Pos","Pareja","Pts","PJ","G","P","GG","GP","Dif"]];
+    let lastGroup=null;
+    d.posiciones[cat].forEach(r=>{
+      if(lastGroup!==null&&r.grupo!==lastGroup)rows.push([]); // línea en blanco entre grupos
+      rows.push([r.grupo,r.pos,r.pareja,r.pts,r.pj,r.g,r.pp,r.gg,r.gp,r.dif]);
+      lastGroup=r.grupo;
+    });
+    const ws=XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols']=[{wch:12},{wch:5},{wch:30},{wch:6},{wch:5},{wch:5},{wch:5},{wch:6},{wch:6},{wch:6}];
+    const label=cat==='1era'?'Posiciones 1°':cat==='2da'?'Posiciones 2°':'Posiciones 3°';
+    XLSX.utils.book_append_sheet(wb,ws,label);
+  });
+
+  // Hoja: Resultados de grupos
+  if(d.resultados.length){
+    const wsR=XLSX.utils.aoa_to_sheet([["Categoría","Grupo","Pareja 1","Pareja 2","Resultado","Estado"],...d.resultados]);
+    wsR['!cols']=[{wch:16},{wch:10},{wch:26},{wch:26},{wch:14},{wch:10}];
+    XLSX.utils.book_append_sheet(wb,wsR,"Resultados grupos");
+  }
+
+  // Hoja: Playoff
+  if(d.playoff.length){
+    const wsPO=XLSX.utils.aoa_to_sheet([["Categoría","Ronda","Cruce","Pareja A","Pareja B","Resultado","Ganador"],...d.playoff]);
+    wsPO['!cols']=[{wch:16},{wch:16},{wch:8},{wch:26},{wch:26},{wch:12},{wch:26}];
+    XLSX.utils.book_append_sheet(wb,wsPO,"Playoff");
+  }
+
+  // Campeonas (si hay)
+  const campRows=[["Categoría","Campeonas"]];
+  ["1era","2da","3era"].forEach(cat=>{
+    const champ=getChampion(cat);
+    if(champ)campRows.push([catLabels[cat],pNombre(champ)]);
+  });
+  if(campRows.length>1){
+    const wsC=XLSX.utils.aoa_to_sheet(campRows);
+    wsC['!cols']=[{wch:16},{wch:30}];
+    XLSX.utils.book_append_sheet(wb,wsC,"Campeonas");
+  }
+
+  const fecha=new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb,`torneo_tenis_${fecha}.xlsx`);
+  showToast("Excel completo descargado ✓");
+}
+
+function exportarTorneoPDF(){
+  const jsPDFRef=(window.jspdf&&window.jspdf.jsPDF)||window.jsPDF;
+  if(!jsPDFRef){showToast('Error: librería PDF no cargada');return;}
+  const catLabels={"1era":"1° Categoría","2da":"2° Categoría","3era":"3° Categoría"};
+  const d=recolectarDatosTorneo();
+  const doc=new jsPDFRef({orientation:'portrait',unit:'mm',format:'a4'});
+  const pink=[232,49,138];
+  let y=16;
+
+  // Título
+  doc.setFontSize(18);doc.setTextColor(...pink);
+  doc.text("Tenis y Nosotras x club24",14,y);
+  y+=6;
+  doc.setFontSize(10);doc.setTextColor(90);
+  doc.text("Torneo Americano de Damas - Los Cardales Country Club",14,y);
+  y+=4;
+  doc.setFontSize(8);doc.setTextColor(150);
+  doc.text(`Generado el ${new Date().toLocaleDateString('es-AR')}`,14,y);
+  y+=6;
+
+  const afterTable=()=>{ y=doc.lastAutoTable.finalY+8; };
+  const ensureSpace=(need)=>{ if(y+need>280){doc.addPage();y=16;} };
+
+  // Campeonas
+  const camps=[];
+  ["1era","2da","3era"].forEach(cat=>{const c=getChampion(cat);if(c)camps.push([catLabels[cat],pNombre(c)]);});
+  if(camps.length){
+    ensureSpace(20);
+    doc.setFontSize(13);doc.setTextColor(...pink);doc.text("Campeonas",14,y);y+=2;
+    doc.autoTable({startY:y+2,head:[["Categoría","Campeonas"]],body:camps,
+      theme:'grid',headStyles:{fillColor:pink,fontSize:9},bodyStyles:{fontSize:9},margin:{left:14,right:14}});
+    afterTable();
+  }
+
+  // Por categoría: posiciones
+  ["1era","2da","3era"].forEach(cat=>{
+    if(!d.posiciones[cat].length)return;
+    ensureSpace(30);
+    doc.setFontSize(13);doc.setTextColor(...pink);
+    doc.text(`${catLabels[cat]} — Posiciones`,14,y);y+=2;
+    const body=d.posiciones[cat].map(r=>[r.grupo,r.pos,r.pareja,r.pts,r.pj,r.g,r.pp,r.gg,r.gp,r.dif]);
+    doc.autoTable({startY:y+2,
+      head:[["Grupo","#","Pareja","Pts","PJ","G","P","GG","GP","Dif"]],body,
+      theme:'striped',headStyles:{fillColor:pink,fontSize:8},bodyStyles:{fontSize:7.5},
+      columnStyles:{2:{cellWidth:50}},margin:{left:14,right:14}});
+    afterTable();
+  });
+
+  // Resultados de grupos
+  if(d.resultados.length){
+    ensureSpace(30);
+    doc.setFontSize(13);doc.setTextColor(...pink);doc.text("Resultados de grupos",14,y);y+=2;
+    doc.autoTable({startY:y+2,
+      head:[["Cat.","Grupo","Pareja 1","Pareja 2","Result.","Estado"]],
+      body:d.resultados.map(r=>[r[0].replace(' Categoría',''),r[1],r[2],r[3],r[4],r[5]]),
+      theme:'grid',headStyles:{fillColor:pink,fontSize:8},bodyStyles:{fontSize:7},
+      columnStyles:{2:{cellWidth:42},3:{cellWidth:42}},margin:{left:14,right:14}});
+    afterTable();
+  }
+
+  // Playoff
+  if(d.playoff.length){
+    ensureSpace(30);
+    doc.setFontSize(13);doc.setTextColor(...pink);doc.text("Playoff",14,y);y+=2;
+    doc.autoTable({startY:y+2,
+      head:[["Cat.","Ronda","Cruce","Pareja A","Pareja B","Result.","Ganador"]],
+      body:d.playoff.map(r=>[r[0].replace(' Categoría',''),r[1],r[2],r[3],r[4],r[5],r[6]]),
+      theme:'grid',headStyles:{fillColor:pink,fontSize:8},bodyStyles:{fontSize:7},
+      columnStyles:{3:{cellWidth:32},4:{cellWidth:32},6:{cellWidth:32}},margin:{left:14,right:14}});
+    afterTable();
+  }
+
+  const fecha=new Date().toISOString().slice(0,10);
+  doc.save(`torneo_tenis_${fecha}.pdf`);
+  showToast("PDF completo descargado ✓");
 }
 
 function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200);}
