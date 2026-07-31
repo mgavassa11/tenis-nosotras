@@ -43,30 +43,6 @@ let playoffData={"1era":null,"2da":null,"3era":null};
 let playoffMode={"1era":"semis","2da":"cuartos","3era":"cuartos"};
 let tiebreakOrder=["pts","bal","gg","h2h"];
 let reglamentoText="";
-// Modo de clasificación por categoría:
-// "1ros"        -> solo todos los 1ros
-// "1ros_2dos"   -> todos los 1ros y todos los 2dos
-// "1ro_mejor1"  -> todos los 1ros + el mejor 2do de la totalidad de los grupos
-// "1ro_mejor2"  -> todos los 1ros + los 2 mejores 2dos de la totalidad de los grupos
-// "1ro_mejor3"  -> todos los 1ros + los 3 mejores 2dos de la totalidad de los grupos
-let clasificacionMode={"1era":"1ro_mejor1","2da":"1ro_mejor1","3era":"1ro_mejor1"};
-
-const CLASIF_LABELS={
-  "1ros":"Todos los 1º",
-  "1ros_2dos":"Todos los 1º y 2º",
-  "1ro_mejor1":"Todos los 1º y el mejor 2º",
-  "1ro_mejor2":"Todos los 1º y los 2 mejores 2º",
-  "1ro_mejor3":"Todos los 1º y los 3 mejores 2º",
-};
-
-// Datos generales del torneo (editables por el admin)
-let torneoInfo={
-  emoji:"🎾",
-  nombre:"Tenis y Nosotras × club24",
-  subtitulo:"Torneo Americano de Damas — 26 de Junio · Los Cardales Country Club"
-};
-// Lista de imágenes de sponsors (URLs), agregadas por el admin.
-let sponsors=[];
 
 const state={
   mainView:"jugadoras",
@@ -77,8 +53,7 @@ const state={
   adminSection:"pairs",
   adminPairsGroup:{},
   adminUnlocked:false,
-  schedSubTab:"grupos", // "grupos" | "playoff"
-  proximosFilter:"horario", // "horario" | "buscar"
+  proximosFilter:"horario",
   proximosBuscarNombre:"",
 };
 ["1era","2da","3era"].forEach(c=>{state.adminPairsGroup[c]=null;});
@@ -160,8 +135,7 @@ async function seedInitialData(){
 
   await supabaseClient.from('configuracion').insert([
     {clave:'playoff_mode',valor:{"1era":"semis","2da":"cuartos","3era":"cuartos"}},
-    {clave:'tiebreak_order',valor:["pts","bal","gg","h2h"]},
-    {clave:'clasificacion_mode',valor:{"1era":"1ro_mejor1","2da":"1ro_mejor1","3era":"1ro_mejor1"}}
+    {clave:'tiebreak_order',valor:["pts","bal","gg","h2h"]}
   ]);
 }
 
@@ -184,6 +158,9 @@ async function loadAllData(){
     }
     groupMap[key].parejas.push({id:p.id,j1:p.jugadora1,j2:p.jugadora2,cardales:p.cardales});
   });
+  Object.keys(grupos).forEach(cat=>{
+    grupos[cat].sort((a,b)=>a.id.localeCompare(b.id));
+  });
 
   partidos=(matchesData||[]).map(m=>({
     id:m.id,cat:m.categoria,grupoId:m.grupo_id,p1:m.pareja1_id,p2:m.pareja2_id,
@@ -204,39 +181,11 @@ async function loadAllData(){
     if(row.clave==='playoff_mode') playoffMode={...playoffMode,...row.valor};
     if(row.clave==='tiebreak_order') tiebreakOrder=row.valor;
     if(row.clave==='reglamento') reglamentoText=row.valor||'';
-    if(row.clave==='clasificacion_mode') clasificacionMode={...clasificacionMode,...row.valor};
-    if(row.clave==='torneo_info') torneoInfo={...torneoInfo,...row.valor};
-    if(row.clave==='sponsors') sponsors=row.valor||[];
-    if(row.clave==='grupos_vacios'){
-      // Grupos creados por el admin que todavía no tienen parejas cargadas.
-      // Los agregamos solo si no quedaron ya representados por alguna pareja.
-      const vacios=row.valor||{};
-      ["1era","2da","3era"].forEach(c=>{
-        (vacios[c]||[]).forEach(gid=>{
-          if(!grupos[c].some(g=>g.id===gid)){
-            grupos[c].push({id:gid,parejas:[]});
-          }
-        });
-      });
-    }
-  });
-
-  Object.keys(grupos).forEach(cat=>{
-    grupos[cat].sort((a,b)=>a.id.localeCompare(b.id));
   });
 
   ["1era","2da","3era"].forEach(c=>{
     if(grupos[c].length && !state.adminPairsGroup[c]) state.adminPairsGroup[c]=grupos[c][0].id;
   });
-}
-// Guarda en Supabase la lista de grupos que existen pero todavía no tienen
-// ninguna pareja cargada, para que no se pierdan al recargar la página.
-async function saveGruposVacios(){
-  const vacios={};
-  ["1era","2da","3era"].forEach(c=>{
-    vacios[c]=grupos[c].filter(g=>g.parejas.length===0).map(g=>g.id);
-  });
-  await supabaseClient.from('configuracion').upsert({clave:'grupos_vacios',valor:vacios});
 }
 
 // ====================================================
@@ -252,24 +201,7 @@ function getPlayoffConfig(cat){
   if(mode==='semis') return{total:4,roundName:'semis'};
   return{total:8,roundName:'cuartos'};
 }
-// Cuántas posiciones por grupo clasifican SIEMPRE (línea de corte fija):
-// 1 para todos los modos salvo "1ros_2dos" donde clasifican los 2 primeros.
-function getCutPos(cat){
-  const mode=clasificacionMode[cat];
-  if(mode==='1ros_2dos')return 2;
-  return 1;
-}
-// Cuántos cupos de "mejor 2do" hay en total según el modo elegido.
-// null significa "todos los segundos" (no hay ranking, todos clasifican).
-function getCuposMejoresSegundos(cat){
-  const mode=clasificacionMode[cat];
-  if(mode==='1ros')return 0;
-  if(mode==='1ros_2dos')return null; // todos los segundos clasifican, sin ranking
-  if(mode==='1ro_mejor1')return 1;
-  if(mode==='1ro_mejor2')return 2;
-  if(mode==='1ro_mejor3')return 3;
-  return 1;
-}
+function getCutPos(){return 1;}
 
 function getStatsRaw(gId,cat){
   const g=grupos[cat].find(g=>g.id===gId);if(!g)return[];
@@ -293,85 +225,21 @@ function h2hResult(pairAId,pairBId,gId){
   const aWon=aIsP1?w1>w2:w2>w1;
   return aWon?1:-1;
 }
-
-// Sorteo estable: usamos el id de la pareja como semilla simple para que el
-// resultado del sorteo no cambie en cada render (no es aleatorio en cada
-// pantalla, pero tampoco sigue ningún criterio deportivo real).
-function ordenSorteo(bloque){
-  return[...bloque].sort((a,b)=>a.id.localeCompare(b.id));
-}
-
-// ====================================================
-// DESEMPATE DENTRO DE UN GRUPO (orden fijo, no configurable):
-// 1. Puntos
-// 2. Si son exactamente 2 empatadas: cara a cara directo entre ellas
-// 3. Si son 3 o más empatadas: diferencia de games considerando TODOS
-//    los partidos del grupo (no solo entre las empatadas). Las que
-//    sigan empatadas de a 2 en esa diferencia se resuelven por cara a
-//    cara directo entre ellas. Si siguen empatadas de a 3 o más en esa
-//    diferencia (ciclo perfecto), se define por sorteo.
-// ====================================================
-function ordenarGrupoConDesempate(stats,gId){
-  // Agrupar por puntos (de mayor a menor)
-  const porPuntos={};
-  stats.forEach(p=>{
-    if(!porPuntos[p.pts])porPuntos[p.pts]=[];
-    porPuntos[p.pts].push(p);
-  });
-  const puntosOrdenados=Object.keys(porPuntos).map(Number).sort((a,b)=>b-a);
-
-  let resultado=[];
-  puntosOrdenados.forEach(pts=>{
-    const grupo=porPuntos[pts];
-    resultado=resultado.concat(desempatarBloque(grupo,gId));
-  });
-  return resultado;
-}
-
-// Desempata un bloque de parejas que están empatadas en puntos.
-function desempatarBloque(bloque,gId){
-  if(bloque.length===1)return bloque;
-
-  if(bloque.length===2){
-    const r=h2hResult(bloque[0].id,bloque[1].id,gId);
-    if(r===1)return[bloque[0],bloque[1]];
-    if(r===-1)return[bloque[1],bloque[0]];
-    // Si no se jugó el partido entre sí todavía: queda indefinido por ahora
-    return bloque;
-  }
-
-  // 3 o más empatadas en puntos: diferencia de games del GRUPO COMPLETO
-  // (ya viene calculada en p.bal con todos los partidos jugados del grupo).
-  const porBalance={};
-  bloque.forEach(p=>{
-    if(!porBalance[p.bal])porBalance[p.bal]=[];
-    porBalance[p.bal].push(p);
-  });
-  const balOrdenados=Object.keys(porBalance).map(Number).sort((a,b)=>b-a);
-
-  let resultado=[];
-  balOrdenados.forEach(bal=>{
-    const subBloque=porBalance[bal];
-    if(subBloque.length===1){
-      resultado=resultado.concat(subBloque);
-    }else if(subBloque.length===2){
-      // Dos parejas con la misma diferencia general: cara a cara entre ellas
-      const r=h2hResult(subBloque[0].id,subBloque[1].id,gId);
-      if(r===1)resultado=resultado.concat([subBloque[0],subBloque[1]]);
-      else if(r===-1)resultado=resultado.concat([subBloque[1],subBloque[0]]);
-      else resultado=resultado.concat(subBloque); // no jugaron entre sí: indefinido
-    }else{
-      // 3 o más con exactamente la misma diferencia general: ciclo
-      // perfecto, no hay más criterios deportivos → sorteo.
-      resultado=resultado.concat(ordenSorteo(subBloque));
+function compareByTiebreak(a,b,gId){
+  for(const crit of tiebreakOrder){
+    if(crit==='pts'&&a.pts!==b.pts)return b.pts-a.pts;
+    if(crit==='bal'&&a.bal!==b.bal)return b.bal-a.bal;
+    if(crit==='gg'&&a.gg!==b.gg)return b.gg-a.gg;
+    if(crit==='h2h'){
+      const r=h2hResult(a.id,b.id,gId);
+      if(r!==0)return -r;
     }
-  });
-  return resultado;
+  }
+  return 0;
 }
-
 function getStats(gId,cat){
   const raw=getStatsRaw(gId,cat);
-  return ordenarGrupoConDesempate(raw,gId);
+  return raw.sort((a,b)=>compareByTiebreak(a,b,gId));
 }
 function getAdj(p,gId,cat){
   const g=grupos[cat].find(g=>g.id===gId);
@@ -388,37 +256,6 @@ function getAdj(p,gId,cat){
   });
   return{...p,pts,gw,l,gg,gp,bal:gg-gp,adjusted:true};
 }
-// ====================================================
-// DESEMPATE ENTRE MEJORES SEGUNDOS (orden fijo, no configurable):
-// 1. Puntos
-// 2. Diferencia de games (balance)
-// 3. Games ganados
-// 4. Games perdidos (menos es mejor)
-// 5. Si los 4 criterios anteriores son exactamente iguales: sorteo
-// ====================================================
-function compararMejoresSegundos(a,b){
-  if(a.pts!==b.pts)return b.pts-a.pts;
-  if(a.bal!==b.bal)return b.bal-a.bal;
-  if(a.gg!==b.gg)return b.gg-a.gg;
-  if(a.gp!==b.gp)return a.gp-b.gp; // menos games perdidos es mejor
-  return 0; // empate total en los 4 criterios: se resuelve después por sorteo
-}
-// Ordena una lista completa aplicando los 4 criterios y, para los bloques
-// que terminen exactamente empatados en los 4, aplica sorteo (mismo criterio
-// estable que usamos para el desempate dentro de los grupos).
-function ordenarMejoresConSorteo(lista){
-  const ordenada=[...lista].sort(compararMejoresSegundos);
-  let resultado=[];
-  let i=0;
-  while(i<ordenada.length){
-    let j=i+1;
-    while(j<ordenada.length&&compararMejoresSegundos(ordenada[i],ordenada[j])===0)j++;
-    const bloque=ordenada.slice(i,j);
-    resultado=resultado.concat(bloque.length>1?ordenSorteo(bloque):bloque);
-    i=j;
-  }
-  return resultado;
-}
 function getSeeds(cat){
   const cfg=getPlayoffConfig(cat);
   const firsts=[],seconds=[];
@@ -427,35 +264,12 @@ function getSeeds(cat){
     if(st[0])firsts.push({...st[0],rank:1,grupoId:g.id});
     if(st[1])seconds.push({...getAdj(st[1],g.id,cat),rank:2,grupoId:g.id});
   });
-  const firstsOrdenados=ordenarMejoresConSorteo(firsts);
-  const secondsOrdenados=ordenarMejoresConSorteo(seconds);
-
-  // Cuántos segundos clasifican según el modo elegido en "Clasificación":
-  // 0 ("1ros"), null=todos ("1ros_2dos"), o 1/2/3 (mejor 2do, 2 mejores, 3 mejores).
-  const cuposSegundos=getCuposMejoresSegundos(cat);
-
-  let qF,qS;
-  if(cuposSegundos===0){
-    // Solo clasifican los primeros: tomamos tantos primeros como cupos
-    // tenga el cuadro de playoff (cfg.total).
-    qF=firstsOrdenados.slice(0,cfg.total);
-    qS=[];
-  }else if(cuposSegundos===null){
-    // Todos los primeros y todos los segundos clasifican: el cuadro de
-    // playoff necesita cfg.total parejas en total, repartidas entre todos
-    // los primeros (hasta donde alcancen) y luego los segundos que falten.
-    qF=firstsOrdenados.slice(0,cfg.total);
-    const faltan=Math.max(0,cfg.total-qF.length);
-    qS=secondsOrdenados.slice(0,faltan);
-  }else{
-    // Todos los primeros + una cantidad fija de mejores segundos (1, 2 o 3),
-    // tal como se definió en la pestaña Clasificación — independiente del
-    // total de cupos del cuadro de playoff.
-    qF=firstsOrdenados.slice(0,firstsOrdenados.length);
-    qS=secondsOrdenados.slice(0,cuposSegundos);
-  }
-
-  return{firsts:firstsOrdenados,seconds:secondsOrdenados,qualFirsts:qF,qualSeconds:qS,cfg};
+  firsts.sort((a,b)=>b.pts-a.pts||b.bal-a.bal||b.gg-a.gg);
+  seconds.sort((a,b)=>b.pts-a.pts||b.bal-a.bal||b.gg-a.gg);
+  const half=cfg.total/2;
+  const qF=firsts.slice(0,half);
+  const qS=seconds.slice(0,half);
+  return{firsts,seconds,qualFirsts:qF,qualSeconds:qS,cfg};
 }
 function getChampion(cat){
   const po=playoffData[cat];
@@ -463,47 +277,6 @@ function getChampion(cat){
   const fr=po.rounds[po.rounds.length-1];
   if(!fr||!fr.matches[0]?.winner)return null;
   return fr.matches[0].winner;
-}
-
-// ====================================================
-// CLASIFICACIÓN VISUAL (líneas de corte y notas), independiente del
-// armado del cuadro de playoff. Devuelve, para cada grupo, en qué
-// posición termina la línea de corte de "clasificados directos" (1° o
-// 1°+2°), y si hace falta el ranking de mejores segundos, devuelve
-// también el set de ids que efectivamente clasifican ahí y si hay un
-// empate sin resolver en el límite (para mostrar la nota de sorteo).
-// ====================================================
-function getClasificacionInfo(cat){
-  const mode=clasificacionMode[cat];
-  const cutPos=getCutPos(cat); // 1 o 2
-  const cupos=getCuposMejoresSegundos(cat); // null=todos, o 0/1/2/3
-
-  // Si el modo es "1ros" (cupos=0) o "1ros_2dos" (cupos=null, todos clasifican),
-  // no hay ranking de mejores segundos que mostrar.
-  const usaRankingSegundos = mode==='1ro_mejor1'||mode==='1ro_mejor2'||mode==='1ro_mejor3';
-
-  let secondsIds=new Set();
-  let empateEnLimite=false;
-  if(usaRankingSegundos){
-    const seconds=[];
-    grupos[cat].forEach(g=>{
-      const st=getStats(g.id,cat);
-      if(st[1])seconds.push({...getAdj(st[1],g.id,cat),grupoId:g.id});
-    });
-    const ordenados=ordenarMejoresConSorteo(seconds);
-    const tomados=ordenados.slice(0,cupos);
-    tomados.forEach(s=>secondsIds.add(s.id));
-    // Detectar si hay empate exacto sin resolver justo en el límite del corte
-    // (comparamos la última que entra contra la primera que queda afuera).
-    if(ordenados.length>cupos){
-      const ultimaQueEntra=ordenados[cupos-1];
-      const primeraQueQuedaAfuera=ordenados[cupos];
-      if(ultimaQueEntra&&primeraQueQuedaAfuera&&compararMejoresSegundos(ultimaQueEntra,primeraQueQuedaAfuera)===0){
-        empateEnLimite=true;
-      }
-    }
-  }
-  return{cutPos,cupos,usaRankingSegundos,secondsIds,empateEnLimite};
 }
 function getSched(matchId){return matchSchedule[matchId]||{cancha:'',hora:'',after:false,afterMatchId:''};}
 
@@ -522,8 +295,8 @@ function renderMainTabs(){
   document.getElementById('app').innerHTML=`
     <div class="header">
       <div class="header-credit">Cuadro del torneo<br>by @marcosgavassaa</div>
-      <h1>${torneoInfo.emoji} ${torneoInfo.nombre}</h1>
-      <p>${torneoInfo.subtitulo}</p>
+      <h1>🎾 Tenis y Nosotras × club24</h1>
+      <p>Torneo Americano de Damas — 26 de Junio · Los Cardales Country Club</p>
     </div>
     <div class="pillbar" id="mainTabs"></div>
     <div id="view-jugadoras" style="display:${state.mainView==='jugadoras'?'block':'none'};">
@@ -564,17 +337,12 @@ function buildCatTabs(elId,cur,fn){
   document.getElementById(elId).innerHTML=["1era","2da","3era"].map(c=>`<button class="pill-sm ${c===cur?'active':''}" onclick="${fn}('${c}')">${labels[c]}</button>`).join('');
 }
 function tiebreakLegendHtml(){
-  return `<div class="tiebreak-bar"><strong>Orden de desempate en caso de igualdad:</strong><ol>
-    <li>Puntos</li>
-    <li>Si son 2 empatadas: resultado cara a cara entre ellas</li>
-    <li>Si son 3 o más empatadas: diferencia de games de todo el grupo</li>
-    <li>Las que sigan empatadas de a 2 en esa diferencia: cara a cara entre ellas</li>
-    <li>Si sigue el empate entre 3 o más (ciclo perfecto): sorteo</li>
-  </ol></div>`;
+  const ol=tiebreakOrder.map(k=>`<li>${TB_LABELS[k]}</li>`).join('');
+  return `<div class="tiebreak-bar"><strong>Orden de desempate en caso de igualdad:</strong><ol>${ol}</ol></div>`;
 }
 
 // ====================================================
-// VISTA JUGADORAS / LIVE (compartida)
+// VISTA JUGADORAS
 // ====================================================
 function renderJ(){
   buildCatTabs('ctj',state.cat,'switchCatJ');
@@ -622,9 +390,6 @@ function renderPublicView(cat,subTab,targetElId){
           .map(m=>({...m,grupoId:r.name,isPlayoff:true})))
       : [];
     let pend=[...pendPlayoff,...pendGrupos];
-    // Orden por horario: los que tienen hora fija van primero (de más
-    // temprano a más tarde), los "a continuación de" después, y los que
-    // todavía no tienen ningún dato cargado quedan al final.
     pend.sort((a,b)=>{
       const sa=getSched(a.id),sb=getSched(b.id);
       const rank=s=> s.hora ? 0 : (s.after ? 1 : 2);
@@ -640,8 +405,6 @@ function renderPublicView(cat,subTab,targetElId){
     </div>`;
 
     if(state.proximosFilter==='buscar'){
-      // Lista única de jugadoras de esta categoría (sin duplicar nombres
-      // repetidos) para elegir en el selector.
       const nombresSet=new Set();
       grupos[cat].forEach(g=>g.parejas.forEach(p=>{nombresSet.add(p.j1);nombresSet.add(p.j2);}));
       const nombres=[...nombresSet].sort((a,b)=>a.localeCompare(b,'es',{sensitivity:'base'}));
@@ -681,16 +444,6 @@ function renderPublicView(cat,subTab,targetElId){
     return;
   }
 
-  // SPONSORS: solo se muestran si el administrador cargó al menos uno.
-  // Van justo entre los tabs/sub-tabs y el contenido de grupos.
-  if(sponsors.length){
-    html+=`<div class="sponsors-strip">`;
-    sponsors.forEach(url=>{
-      html+=`<img src="${url}" alt="Sponsor" class="sponsor-img">`;
-    });
-    html+=`</div>`;
-  }
-
   const{firsts,seconds,qualSeconds,cfg}=getSeeds(cat);
   const champion=getChampion(cat);
 
@@ -703,13 +456,12 @@ function renderPublicView(cat,subTab,targetElId){
     </div>`;
   }
 
-  // PLAYOFF ARRIBA, si ya fue creado
   if(playoffData[cat]){
     html+=`<div class="phase-label">Playoff</div>`;
     if(playoffData[cat].isPreview){
       html+=`<div class="preview-banner">⚠️ Vista previa — el administrador todavía puede modificar este cuadro.</div>`;
     }
-    html+=renderBracketTree(playoffData[cat],cat);
+    html+=renderBracketTree(playoffData[cat]);
     const champ=getChampion(cat);
     if(champ){
       const p=getP(champ);
@@ -723,47 +475,17 @@ function renderPublicView(cat,subTab,targetElId){
     }
   }
 
-  // ZONA DE GRUPOS DEBAJO
-  const clasifInfo=getClasificacionInfo(cat);
   html+=`<div class="phase-label" style="margin-top:${playoffData[cat]?'1.8rem':'0'};">Zona de grupos</div>`;
   grupos[cat].forEach(g=>{
     const stats=getStats(g.id,cat);
-    if(!g.parejas.length){
-      html+=`<div class="grupo"><div class="grupo-header">Grupo ${g.id} · sin parejas todavía</div></div>`;
-      return;
-    }
-    let cutPos=clasifInfo.cutPos;
-    // Si hay 2+ parejas empatadas exactamente en el límite del corte propio
-    // del grupo (mismo Pts, Dif, GG y GP que la pareja en la posición de
-    // corte), movemos la línea para abarcarlas a todas y avisamos que ese
-    // tramo se define por sorteo dentro del grupo.
-    let sorteoEnGrupo=false;
-    if(stats.length>cutPos){
-      const limite=stats[cutPos-1];
-      let finBloque=cutPos;
-      while(finBloque<stats.length &&
-            stats[finBloque].pts===limite.pts &&
-            stats[finBloque].bal===limite.bal &&
-            stats[finBloque].gg===limite.gg &&
-            stats[finBloque].gp===limite.gp){
-        finBloque++;
-      }
-      if(finBloque>cutPos){
-        cutPos=finBloque;
-        sorteoEnGrupo=true;
-      }
-    }
+    const cut=getCutPos();
     html+=`<div class="grupo">
       <div class="grupo-header">Grupo ${g.id} · ${g.parejas.length} parejas</div>
       <div class="table-scroll"><table class="grupo-table">
         <thead><tr><th style="width:26px">#</th><th class="thl">Pareja</th><th>Pts</th><th>G</th><th>P</th><th>GG</th><th>GP</th><th>Dif</th></tr></thead>
         <tbody>`;
     stats.forEach((p,i)=>{
-      const shade=i%2===1,isCut=i===cutPos-1;
-      // Además del corte de clasificación directa, marcamos también si esta
-      // pareja (siendo 2da o peor) es una de las que efectivamente clasificó
-      // como "mejor 2do" según el ranking general — útil cuando cutPos===1
-      // pero hay más de un cupo de mejores segundos.
+      const shade=i%2===1,isCut=i===cut-1;
       html+=`<tr class="${shade?'shade':''} ${isCut?'cut-row':''}">
         <td><span class="pos-badge pos-${i+1}">${i+1}</span></td>
         <td class="tdl"><div class="pnames"><span>${p.j1}</span><span>${p.j2}</span></div></td>
@@ -772,10 +494,7 @@ function renderPublicView(cat,subTab,targetElId){
       </tr>`;
     });
     html+=`</tbody></table></div>`;
-    if(sorteoEnGrupo){
-      html+=`<div class="cnote" style="color:#854d0e;background:#fffbeb;">⚠️ Empate exacto en el límite de clasificación de este grupo — se define por sorteo.</div>`;
-    }
-    const note=`🎾 ${CLASIF_LABELS[clasificacionMode[cat]]} clasifican${clasifInfo.usaRankingSegundos?` (2do compite por los mejores segundos para ${playoffMode[cat]})`:''}.`;
+    const note=`🎾 1ro clasifica directo. 2do compite por los mejores segundos para ${playoffMode[cat]}.`;
     html+=`<div class="cnote">${note}</div>
       <div class="legend-bar"><strong>Pts</strong>: puntos (3 x victoria) &nbsp;·&nbsp; <strong>G</strong>: ganados &nbsp;·&nbsp; <strong>P</strong>: perdidos &nbsp;·&nbsp; <strong>GG</strong>: games ganados &nbsp;·&nbsp; <strong>GP</strong>: games perdidos &nbsp;·&nbsp; <strong>Dif</strong>: diferencia de games (GG-GP)</div>
       ${tiebreakLegendHtml()}
@@ -783,35 +502,32 @@ function renderPublicView(cat,subTab,targetElId){
     html+=renderMatrixTable(g,cat);
   });
 
-  if(clasifInfo.usaRankingSegundos&&seconds.length){
-    const needed=clasifInfo.cupos;
-    html+=`<div class="phase-label" style="margin-top:1.5rem;">Ranking mejores 2dos</div>`;
-    html+=`<div class="grupo"><div class="grupo-header">Ranking 2dos puestos</div>
-      <div class="table-scroll"><table class="grupo-table">
-        <thead><tr><th>#</th><th class="thl">Pareja</th><th>Grupo</th><th>Pts</th><th>GG</th><th>GP</th><th>Dif</th></tr></thead><tbody>`;
-    seconds.forEach((s,i)=>{
-      const shade=i%2===1,cl=i<needed,isCut=i===needed-1&&needed<seconds.length;
-      html+=`<tr class="${shade?'shade':''} ${isCut?'cut-row':''}">
-        <td><span class="pos-badge ${cl?'pos-1':''}">${i+1}</span></td>
-        <td class="tdl"><div class="pnames"><span>${s.j1}</span><span>${s.j2}</span></div></td>
-        <td>${s.grupoId}</td><td>${s.pts}</td><td>${s.gg}</td><td>${s.gp}</td><td>${s.bal>0?'+':''}${s.bal}</td>
-      </tr>`;
-    });
-    html+=`</tbody></table></div>`;
-    if(clasifInfo.empateEnLimite){
-      html+=`<div class="cnote" style="color:#854d0e;background:#fffbeb;">⚠️ Empate exacto en el límite de clasificación entre mejores segundos — se define por sorteo.</div>`;
+  if(seconds.length&&cat!=="1era"){
+    const needed=cfg.total-firsts.length;
+    if(needed>0){
+      html+=`<div class="phase-label" style="margin-top:1.5rem;">Ranking mejores 2dos</div>`;
+      html+=`<div class="grupo"><div class="grupo-header">Ranking 2dos puestos</div>
+        <div class="table-scroll"><table class="grupo-table">
+          <thead><tr><th>#</th><th class="thl">Pareja</th><th>Grupo</th><th>Pts</th><th>GG</th><th>GP</th><th>Dif</th></tr></thead><tbody>`;
+      seconds.forEach((s,i)=>{
+        const shade=i%2===1,cl=i<needed,isCut=i===needed-1&&needed<seconds.length;
+        html+=`<tr class="${shade?'shade':''} ${isCut?'cut-row':''}">
+          <td><span class="pos-badge ${cl?'pos-1':''}">${i+1}</span></td>
+          <td class="tdl"><div class="pnames"><span>${s.j1}</span><span>${s.j2}</span></div></td>
+          <td>${s.grupoId}</td><td>${s.pts}</td><td>${s.gg}</td><td>${s.gp}</td><td>${s.bal>0?'+':''}${s.bal}</td>
+        </tr>`;
+      });
+      html+=`</tbody></table></div>
+        <div class="cnote">Todos los segundos clasifican si el número de grupos lo permite. En grupos de 4, las stats se comparan directo.</div>
+        <div class="legend-bar">
+          <strong>Cómo se rompe el empate entre segundos:</strong><br>
+          1° criterio: más <strong>Pts</strong> (puntos obtenidos en su grupo).<br>
+          2° criterio (si persiste el empate en puntos): mejor <strong>Dif</strong> (diferencia de games ganados menos perdidos).<br>
+          3° criterio (si persiste el empate en balance): más <strong>GG</strong> (total de games ganados).<br>
+          En grupos de 5 parejas, las estadísticas del 2do se calculan excluyendo el partido contra la última pareja del grupo, para comparar en igualdad de partidos jugados con los segundos de grupos de 4.
+        </div>
+      </div>`;
     }
-    html+=`<div class="cnote">${clasifInfo.cupos===1?'Clasifica el mejor segundo de la totalidad de los grupos.':`Clasifican los ${clasifInfo.cupos} mejores segundos de la totalidad de los grupos.`}</div>
-      <div class="legend-bar">
-        <strong>Cómo se rompe el empate entre segundos:</strong><br>
-        1° criterio: más <strong>Pts</strong> (puntos obtenidos en su grupo).<br>
-        2° criterio (si persiste el empate en puntos): mejor <strong>Dif</strong> (diferencia de games ganados menos perdidos).<br>
-        3° criterio (si persiste el empate en diferencia): más <strong>GG</strong> (total de games ganados).<br>
-        4° criterio (si persiste el empate en GG): menos <strong>GP</strong> (total de games perdidos).<br>
-        5° criterio (si los 4 anteriores son exactamente iguales): sorteo.<br>
-        En grupos de 5 parejas, las estadísticas del 2do se calculan excluyendo el partido contra la última pareja del grupo, para comparar en igualdad de partidos jugados con los segundos de grupos de 4.
-      </div>
-    </div>`;
   }
 
   el.innerHTML=html||'<div class="empty">No hay datos.</div>';
@@ -904,8 +620,6 @@ function renderPCard(m){
 
 function setProximosFilter(f){
   state.proximosFilter=f;
-  // Re-renderiza la vista correcta según dónde estemos parados
-  // (vista pública de Jugadoras o Live dentro del panel de admin).
   if(state.mainView==='admin'&&state.adminSection==='live'){
     renderPublicView(state.liveCat,state.liveSubTab,'liveContent');
   }else{
@@ -921,9 +635,6 @@ function setProximosBuscarNombre(nombre){
   }
 }
 
-// Tarjeta compacta para el filtro "Por jugadora (A-Z)": encabezada por el
-// nombre de la jugadora individual, mostrando contra quién juega y los
-// mismos datos de cancha/hora que la tarjeta de partido normal.
 function renderJugadoraEntry(nombre,m){
   const rival1=getP(m.p1),rival2=getP(m.p2);
   const esP1=rival1&&(rival1.j1===nombre||rival1.j2===nombre);
@@ -957,7 +668,7 @@ function renderJugadoraEntry(nombre,m){
   </div>`;
 }
 
-function renderBracketTree(playoff,cat){
+function renderBracketTree(playoff){
   const MATCH_W=210,COL_GAP=48,COL_W=MATCH_W+COL_GAP,FOOTER_H=20,MATCH_H=44*2+FOOTER_H+2,VPAD=20;
   const rounds=playoff.rounds;
   const r0n=rounds[0].matches.length;
@@ -994,11 +705,7 @@ function renderBracketTree(playoff,cat){
       const n2a=p2?p2.j1:'Por definir',n2b=p2?p2.j2:'';
       let s1='',s2='';
       if(m.sets&&m.sets.length){m.sets.forEach(s=>{s1+=`<span class="sbox ${s[0]>s[1]?'won':''}">${s[0]}</span>`;s2+=`<span class="sbox ${s[1]>s[0]?'won':''}">${s[1]}</span>`;});}
-      // Buscar horario usando el slot fijo de playoff (po_1era_sf1, etc.)
-      // en vez del ID del partido real (sf1), para que coincida con lo
-      // cargado en Canchas y horarios → Playoff.
-      const slotId=cat?`po_${cat}_${m.id}`:m.id;
-      const sched=getSched(slotId)||getSched(m.id);
+      const sched=getSched(m.id);
       let footerText='';
       if(sched.after){const disp=getSchedDisplay(sched);footerText=`A continuación${disp.waitNames?' de '+disp.waitNames:''}${sched.cancha?' · Cancha '+sched.cancha:''}`;}
       else if(sched.cancha||sched.hora) footerText=`${sched.cancha?'Cancha '+sched.cancha:''}${sched.cancha&&sched.hora?' · ':''}${sched.hora||''}`;
@@ -1016,7 +723,8 @@ function renderBracketTree(playoff,cat){
         ${footerContent?`<div class="bmatch-footer">${footerContent}</div>`:''}
       </div>`;
     });
-  html+=`</div>`; });
+    html+=`</div>`;
+  });
   html+=`</div></div>`;
   return html;
 }
@@ -1031,12 +739,9 @@ function renderA(){
     <button class="pill-sm ${state.adminSection==='pairs'?'active':''}" onclick="switchAdminSection('pairs')">Parejas y grupos</button>
     <button class="pill-sm ${state.adminSection==='sched'?'active':''}" onclick="switchAdminSection('sched')">Canchas y horarios</button>
     <button class="pill-sm ${state.adminSection==='results'?'active':''}" onclick="switchAdminSection('results')">Resultados</button>
-    <button class="pill-sm ${state.adminSection==='clasificacion'?'active':''}" onclick="switchAdminSection('clasificacion')">Clasificación</button>
     <button class="pill-sm ${state.adminSection==='playoff'?'active':''}" onclick="switchAdminSection('playoff')">Playoff</button>
     <button class="pill-sm ${state.adminSection==='tiebreak'?'active':''}" onclick="switchAdminSection('tiebreak')">Desempate</button>
     <button class="pill-sm ${state.adminSection==='reglamento'?'active':''}" onclick="switchAdminSection('reglamento')">Reglamento</button>
-    <button class="pill-sm ${state.adminSection==='sponsors'?'active':''}" onclick="switchAdminSection('sponsors')">Sponsors</button>
-    <button class="pill-sm ${state.adminSection==='torneoinfo'?'active':''}" onclick="switchAdminSection('torneoinfo')">Datos del torneo</button>
   `;
   renderAContent();
 }
@@ -1068,157 +773,63 @@ function renderAContent(){
   else if(state.adminSection==='sched') html=renderSectionSched();
   else if(state.adminSection==='results') html=renderSectionResults(cat);
   else if(state.adminSection==='playoff') html=renderSectionPlayoff(cat);
-  else if(state.adminSection==='clasificacion') html=renderSectionClasificacion(cat);
   else if(state.adminSection==='tiebreak') html=renderSectionTiebreak();
   else if(state.adminSection==='reglamento') html=renderSectionReglamento();
-  else if(state.adminSection==='sponsors') html=renderSectionSponsors();
-  else if(state.adminSection==='torneoinfo') html=renderSectionTorneoInfo();
   document.getElementById('acontent').innerHTML=html;
 }
 function switchLiveCat(c){state.liveCat=c;renderA();}
 function switchLiveSub(s){state.liveSubTab=s;renderA();}
 
-// ====================================================
-// CLASIFICACIÓN (qué parejas avanzan a playoff por categoría)
-// ====================================================
-function renderSectionClasificacion(cat){
-  const mode=clasificacionMode[cat];
-  let html=`<div class="ibar">Elegí cómo se define la clasificación a playoff para esta categoría. Esto determina cuántas parejas por grupo pasan directo y si hay ranking de mejores segundos.</div>`;
+function renderSectionTiebreak(){
+  let html=`<div class="ibar">Definí el orden de los criterios de desempate cuando dos o más parejas terminan empatadas en puntos dentro de un mismo grupo.</div>`;
   html+=`<div class="tb-order-list">`;
-  Object.keys(CLASIF_LABELS).forEach(key=>{
-    const active=mode===key;
-    html+=`<div class="tb-order-item" style="cursor:pointer;${active?'border-color:var(--pink);background:var(--pink-bg);':''}" onclick="setClasificacionMode('${cat}','${key}')">
-      <div class="num" style="${active?'':'background:#e5e7eb;color:#555;'}">${active?'✓':''}</div>
-      <div class="label">${CLASIF_LABELS[key]}</div>
+  tiebreakOrder.forEach((crit,i)=>{
+    html+=`<div class="tb-order-item">
+      <div class="num">${i+1}</div>
+      <div class="label">${TB_LABELS[crit]}</div>
+      <div class="arrows">
+        <button class="tb-arrow-btn" onclick="moveTiebreak(${i},-1)" ${i===0?'disabled':''}>↑</button>
+        <button class="tb-arrow-btn" onclick="moveTiebreak(${i},1)" ${i===tiebreakOrder.length-1?'disabled':''}>↓</button>
+      </div>
     </div>`;
   });
   html+=`</div>`;
   html+=`<div class="legend-bar">
-    <strong>Todos los 1º:</strong> solo clasifican los primeros de cada grupo.<br>
-    <strong>Todos los 1º y 2º:</strong> clasifican primeros y segundos de todos los grupos, sin ranking entre segundos.<br>
-    <strong>Todos los 1º y el mejor 2º:</strong> clasifican todos los primeros, y de los segundos, solo el mejor de la totalidad de los grupos.<br>
-    <strong>Todos los 1º y los 2/3 mejores 2º:</strong> igual que el anterior, pero con 2 o 3 cupos de segundos en vez de 1.<br><br>
-    Importante: el formato del cuadro de playoff (cuartos o semis, en la pestaña "Playoff") sigue siendo independiente de esta elección — esta pestaña define quién aparece marcado como clasificado en las tablas, mientras que el cuadro de playoff se sigue armando con la cantidad de cupos que necesite según el formato elegido ahí.
-  </div>`;
-  return html;
-}
-async function setClasificacionMode(cat,mode){
-  clasificacionMode[cat]=mode;
-  await supabaseClient.from('configuracion').upsert({clave:'clasificacion_mode',valor:clasificacionMode});
-  // Refrescar tanto el panel de admin (la pestaña Clasificación en sí, y si
-  // estamos en Live también esa vista) como la vista pública de Jugadoras.
-  renderA();
-  renderJContent();
-  showToast('Modo de clasificación actualizado');
-}
-
-function renderSectionTiebreak(){
-  let html=`<div class="ibar">Estos son los criterios de desempate fijos que aplica el sistema. No son editables porque siguen el reglamento oficial de la liga.</div>`;
-  html+=`<div class="tb-order-list">
-    <div class="tb-order-item"><div class="num">1</div><div class="label">Puntos</div></div>
-    <div class="tb-order-item"><div class="num">2</div><div class="label">Si son 2 empatadas: cara a cara entre ellas</div></div>
-    <div class="tb-order-item"><div class="num">3</div><div class="label">Si son 3+ empatadas: diferencia de games de todo el grupo</div></div>
-    <div class="tb-order-item"><div class="num">4</div><div class="label">Las que sigan empatadas de a 2 en esa diferencia: cara a cara entre ellas</div></div>
-    <div class="tb-order-item"><div class="num">5</div><div class="label">Si sigue el empate entre 3+ (ciclo perfecto): sorteo</div></div>
-  </div>`;
-  html+=`<div class="legend-bar">
     <strong>Puntos:</strong> total de puntos obtenidos en el grupo (3 por victoria).<br>
-    <strong>Si son 2 empatadas:</strong> si ya jugaron entre sí, gana la posición quien ganó ese partido directo. Si todavía no jugaron entre sí, el empate queda indefinido hasta que se cargue ese resultado.<br>
-    <strong>Si son 3 o más empatadas:</strong> se calcula la diferencia de games (games ganados menos perdidos) de cada una considerando TODOS los partidos jugados en el grupo, no solo los enfrentamientos entre las empatadas. La que tenga mejor diferencia general queda mejor posicionada.<br>
-    <strong>Las que sigan empatadas de a 2</strong> en esa diferencia general se desempatan por el resultado directo entre ellas.<br>
-    <strong>Sorteo:</strong> si 3 o más parejas tienen exactamente la misma diferencia de games general (por ejemplo un ciclo perfecto donde A le gana a B 4-0, B le gana a C 4-0 y C le gana a A 4-0), no queda ningún criterio deportivo para desempatar y se define por sorteo.
+    <strong>Diferencia de games:</strong> diferencia entre games ganados y perdidos.<br>
+    <strong>Games ganados:</strong> total de games ganados en el grupo.<br>
+    <strong>Enfrentamiento directo:</strong> resultado del partido jugado entre las parejas empatadas.
   </div>`;
-  html+=`<div class="phase-label" style="margin-top:1.5rem;">Desempate entre mejores segundos (para clasificar a cuartos)</div>`;
-  html+=`<div class="tb-order-list">
-    <div class="tb-order-item"><div class="num">1</div><div class="label">Puntos</div></div>
-    <div class="tb-order-item"><div class="num">2</div><div class="label">Diferencia de games</div></div>
-    <div class="tb-order-item"><div class="num">3</div><div class="label">Games ganados</div></div>
-    <div class="tb-order-item"><div class="num">4</div><div class="label">Games perdidos (menos es mejor)</div></div>
-    <div class="tb-order-item"><div class="num">5</div><div class="label">Si los 4 anteriores son exactamente iguales: sorteo</div></div>
-  </div>`;
-  html+=`<div class="legend-bar">Se usa cuando hay que comparar los segundos puestos de distintos grupos entre sí. No incluye cara a cara porque esas parejas no se enfrentaron en la fase de grupos.</div>`;
   return html;
+}
+async function moveTiebreak(idx,dir){
+  const newIdx=idx+dir;
+  if(newIdx<0||newIdx>=tiebreakOrder.length)return;
+  [tiebreakOrder[idx],tiebreakOrder[newIdx]]=[tiebreakOrder[newIdx],tiebreakOrder[idx]];
+  await supabaseClient.from('configuracion').upsert({clave:'tiebreak_order',valor:tiebreakOrder});
+  renderA();renderJContent();showToast('Orden de desempate actualizado');
 }
 
 // ====================================================
 // REGLAMENTO
 // ====================================================
-// ====================================================
-// DATOS DEL TORNEO (nombre, fecha, lugar)
-// ====================================================
-function renderSectionTorneoInfo(){
-  return `<div class="ibar">Estos datos aparecen en el encabezado de la app, visible para todas las jugadoras.</div>
-    <label>Emoji / ícono</label>
-    <input id="torneoEmojiInput" value="${torneoInfo.emoji}" maxlength="4" style="max-width:80px;">
-    <label>Nombre del torneo</label>
-    <input id="torneoNombreInput" value="${torneoInfo.nombre}">
-    <label>Subtítulo (fecha, lugar, categoría, etc.)</label>
-    <input id="torneoSubtituloInput" value="${torneoInfo.subtitulo}" placeholder="Ej: Torneo Americano de Damas — 26 de Junio · Los Cardales Country Club">
-    <button class="btn btn-pink btn-sm" style="margin-top:10px;" onclick="saveTorneoInfo()">Guardar datos del torneo</button>`;
-}
-async function saveTorneoInfo(){
-  torneoInfo={
-    emoji:document.getElementById('torneoEmojiInput').value||'🎾',
-    nombre:document.getElementById('torneoNombreInput').value||'Torneo',
-    subtitulo:document.getElementById('torneoSubtituloInput').value||''
-  };
-  await supabaseClient.from('configuracion').upsert({clave:'torneo_info',valor:torneoInfo});
-  renderMainTabs();
-  if(state.mainView==='jugadoras')renderJ();
-  else if(state.adminUnlocked)renderA();
-  showToast('Datos del torneo guardados ✓');
-}
-
-// ====================================================
-// SPONSORS (imágenes vía URL, mostradas solo si hay alguna cargada)
-// ====================================================
-function renderSectionSponsors(){
-  let html=`<div class="ibar">Pegá el link directo de cada imagen (por ejemplo subiéndola primero a imgur.com/upload y copiando la dirección de la imagen — tiene que terminar en .png, .jpg o .jpeg). No se pueden subir archivos directamente desde acá, solo enlaces. Si no cargás ningún sponsor, esta sección no se muestra en la vista de las jugadoras.</div>`;
-  html+=`<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
-    <input id="newSponsorUrl" placeholder="https://i.imgur.com/ejemplo.png" style="flex:1;min-width:200px;">
-    <button class="btn btn-pink btn-sm" onclick="addSponsor()">+ Agregar sponsor</button>
-  </div>`;
-  if(!sponsors.length){
-    html+='<div class="empty">Todavía no hay sponsors cargados.</div>';
-  }else{
-    html+=`<div class="grupo" style="padding:10px 14px;">`;
-    sponsors.forEach((url,i)=>{
-      html+=`<div class="sponsor-admin-row">
-        <img src="${url}" alt="Sponsor" onerror="this.style.opacity=0.3">
-        <div class="surl">${url}</div>
-        <button class="btn btn-red btn-sm" onclick="delSponsor(${i})">Borrar</button>
-      </div>`;
-    });
-    html+=`</div>`;
-  }
-  return html;
-}
-async function addSponsor(){
-  const input=document.getElementById('newSponsorUrl');
-  const url=input.value.trim();
-  if(!url){showToast('Pegá un link de imagen primero');return;}
-  sponsors.push(url);
-  await supabaseClient.from('configuracion').upsert({clave:'sponsors',valor:sponsors});
-  renderA();
-  if(state.mainView==='jugadoras')renderJContent();
-  showToast('Sponsor agregado ✓');
-}
-async function delSponsor(i){
-  sponsors.splice(i,1);
-  await supabaseClient.from('configuracion').upsert({clave:'sponsors',valor:sponsors});
-  renderA();
-  if(state.mainView==='jugadoras')renderJContent();
-  showToast('Sponsor eliminado');
-}
-
 function renderSectionReglamento(){
-  return `<div class="ibar">Escribí acá el reglamento del torneo. Para hacer una lista con viñetas, empezá cada línea con un guión "-" o un asterisco "*". Los cambios se ven reflejados para todas las jugadoras apenas guardás.</div>
+  return `<div class="ibar">Escribí el reglamento del torneo. Formato disponible:<br>
+    &bull; <strong>-</strong> al inicio de línea → bullet rosa<br>
+    &bull; <strong>**texto**</strong> → <strong>negrita</strong><br>
+    &bull; <strong>_texto_</strong> → <em>cursiva</em><br>
+    &bull; <strong>__texto__</strong> → <u>subrayado</u><br>
+    &bull; <strong>**_texto_**</strong> → <strong><em>negrita cursiva</em></strong> &nbsp;|&nbsp; <strong>**__texto__**</strong> → <strong><u>negrita subrayado</u></strong><br>
+    &bull; <strong>**___texto___**</strong> → <strong><em><u>negrita cursiva subrayado</u></em></strong><br>
+    &bull; 1 línea en blanco → espacio simple &nbsp;|&nbsp; 2+ líneas → espacio de sección</div>
     <textarea id="reglamentoInput" rows="16" style="width:100%;padding:12px;border:1.5px solid #ccc;border-radius:10px;font-family:inherit;font-size:14px;line-height:1.6;resize:vertical;" placeholder="Ejemplo:
 - Los partidos se juegan a 1 set / 4-5 games.
 - En caso de empate se define con supertiebreak a 10 puntos.
-- Las jugadoras deben presentarse 10 minutos antes del horario asignado.">${reglamentoText}</textarea>
+
+Las jugadoras deben presentarse 10 minutos antes.">${reglamentoText}</textarea>
     <button class="btn btn-pink btn-sm" style="margin-top:10px;" onclick="saveReglamento()">Guardar reglamento</button>`;
 }
+
 async function saveReglamento(){
   const val=document.getElementById('reglamentoInput').value;
   reglamentoText=val;
@@ -1226,61 +837,88 @@ async function saveReglamento(){
   showToast('Reglamento guardado ✓');
 }
 
-// Convierte texto plano con líneas "- algo" o "* algo" en bullets prolijos,
-// y deja las líneas normales como párrafos. Lo usamos tanto en la vista de
-// jugadoras como en el panel de admin (modo solo lectura) para el reglamento.
+// Convierte el texto del reglamento a HTML:
+// - Líneas con "- " o "* " al inicio → bullets rosas
+// - **texto** → negrita | _texto_ → cursiva | __texto__ → subrayado
+// - Combinaciones: **__texto__** / **_texto_** / **___texto___**
+// - 1 línea en blanco → espacio simple | 2+ líneas → espacio de sección
 function renderReglamentoHtml(text){
   if(!text||!text.trim()){
     return '<div class="empty">El administrador todavía no cargó el reglamento.</div>';
   }
+
+  function applyInline(str){
+    // Negrita + cursiva + subrayado: **___texto___**
+    str=str.replace(/\*\*___(.+?)___\*\*/g,'<strong><em><u>$1</u></em></strong>');
+    str=str.replace(/___\*\*(.+?)\*\*___/g,'<strong><em><u>$1</u></em></strong>');
+    // Negrita + subrayado: **__texto__**
+    str=str.replace(/\*\*__(.+?)__\*\*/g,'<strong><u>$1</u></strong>');
+    str=str.replace(/__\*\*(.+?)\*\*__/g,'<strong><u>$1</u></strong>');
+    // Negrita + cursiva: **_texto_**
+    str=str.replace(/\*\*_([^_]+?)_\*\*/g,'<strong><em>$1</em></strong>');
+    str=str.replace(/_\*\*(.+?)\*\*_/g,'<strong><em>$1</em></strong>');
+    // Cursiva + subrayado: ___texto___
+    str=str.replace(/___(.+?)___/g,'<em><u>$1</u></em>');
+    // Negrita sola: **texto**
+    str=str.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+    // Subrayado solo: __texto__
+    str=str.replace(/__(.+?)__/g,'<u>$1</u>');
+    // Cursiva sola: _texto_
+    str=str.replace(/(?<![_])_([^_]+?)_(?![_])/g,'<em>$1</em>');
+    return str;
+  }
+
   const lines=text.split('\n');
   let html='';
   let inList=false;
+  let blankCount=0;
+  let spacerAdded=false;
+
   lines.forEach(line=>{
     const trimmed=line.trim();
     const isBullet=/^[-*]\s+/.test(trimmed);
+
+    if(trimmed===''){
+      blankCount++;
+      if(inList){html+='</ul>';inList=false;}
+      if(blankCount===1){
+        // 1 línea en blanco → espacio simple
+        html+='<div style="margin-bottom:.5rem;"></div>';
+      }else if(blankCount===2&&!spacerAdded){
+        // 2+ líneas en blanco → espacio extra de sección
+        html+='<div style="margin-bottom:.6rem;"></div>';
+        spacerAdded=true;
+      }
+      return;
+    }
+
+    blankCount=0;
+    spacerAdded=false;
+
     if(isBullet){
       if(!inList){html+='<ul class="reglamento-list">';inList=true;}
-      html+=`<li>${trimmed.replace(/^[-*]\s+/,'')}</li>`;
+      html+=`<li>${applyInline(trimmed.replace(/^[-*]\s+/,''))}</li>`;
     }else{
       if(inList){html+='</ul>';inList=false;}
-      if(trimmed){html+=`<p class="reglamento-p">${trimmed}</p>`;}
+      html+=`<p class="reglamento-p" style="margin-bottom:0;">${applyInline(trimmed)}</p>`;
     }
   });
+
   if(inList)html+='</ul>';
   return html;
 }
 
 function renderSectionPairs(cat){
-  let html=`<div class="ibar">Elegí un grupo para editar sus parejas. Podés cambiar nombres, agregar, quitar o mover una pareja a otro grupo (incluso de otra categoría). También podés agregar grupos nuevos o borrar grupos vacíos según la cantidad de parejas inscriptas.</div>`;
-
-  // ---- Importar / limpiar parejas desde Excel ----
-  html+=`<div class="grupo" style="margin-bottom:1.2rem;">
-    <div class="grupo-header">Cargar parejas desde Excel</div>
-    <div style="padding:12px;">
-      <div class="ibar" style="margin-bottom:12px;">Columnas del archivo: <strong>Jugador 1</strong>, <strong>Jugador 2</strong> y <strong>Categoría</strong> (1era, 2da o 3era). La columna <strong>Grupo</strong> es opcional: si la dejás vacía, las parejas se reparten solas en grupos de 4. Se agregan a lo que ya está cargado; las repetidas se ignoran.</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button class="btn btn-out btn-sm" onclick="descargarPlantillaParejas()">⬇ Descargar plantilla</button>
-        <label class="btn btn-pink btn-sm" style="cursor:pointer;">⬆ Importar parejas (Excel)
-          <input type="file" accept=".xlsx,.xls" style="display:none" onchange="importarParejasExcel(this)">
-        </label>
-        <button class="btn btn-red btn-sm" onclick="limpiarParejasUI()">🗑 Limpiar parejas</button>
-      </div>
-    </div>
-  </div>`;
-
   if(!grupos[cat]||!grupos[cat].length){
-    html+='<div class="empty" style="margin-bottom:1rem;">Todavía no hay grupos cargados en esta categoría.</div>';
-    html+=`<button class="btn btn-pink btn-sm" onclick="addGroup('${cat}')">+ Agregar grupo</button>`;
-    return html;
+    return '<div class="empty">Todavía no hay parejas cargadas en esta categoría.</div>';
   }
-
+  let html=`<div class="ibar">Elegí un grupo para editar sus parejas. Podés cambiar nombres, agregar, quitar o mover una pareja a otro grupo (incluso de otra categoría).</div>`;
+  html+=`<div style="margin-bottom:12px;"><button class="btn btn-blk btn-sm" onclick="descargarParejas()">⬇ Descargar parejas actuales</button></div>`;
   html+=`<div class="group-select-bar">`;
   grupos[cat].forEach(g=>{
     const active=state.adminPairsGroup[cat]===g.id;
     html+=`<button class="group-select-btn ${active?'active':''}" onclick="selectPairsGroup('${cat}','${g.id}')">Grupo ${g.id}</button>`;
   });
-  html+=`<button class="group-select-btn" style="background:#fff;color:var(--pink);border:1.5px dashed var(--pink);" onclick="addGroup('${cat}')">+ Agregar grupo</button>`;
   html+=`</div>`;
 
   const selectedG=grupos[cat].find(g=>g.id===state.adminPairsGroup[cat])||grupos[cat][0];
@@ -1294,14 +932,8 @@ function renderSectionPairs(cat){
   });
 
   html+=`<div class="grupo" style="margin-bottom:1.2rem;">
-    <div class="grupo-header" style="display:flex;align-items:center;justify-content:space-between;padding-right:10px;">
-      <span>Grupo ${selectedG.id} (${selectedG.parejas.length} parejas)</span>
-      ${selectedG.parejas.length===0?`<button class="btn btn-red btn-sm" onclick="deleteGroup('${cat}','${selectedG.id}')">Borrar grupo</button>`:''}
-    </div>
+    <div class="grupo-header">Grupo ${selectedG.id} (${selectedG.parejas.length} parejas)</div>
     <div style="padding:12px;">`;
-  if(selectedG.parejas.length===0){
-    html+=`<div class="empty" style="padding:1rem 0;">Este grupo está vacío. Agregá parejas o borralo si no lo vas a usar.</div>`;
-  }
   selectedG.parejas.forEach((p,pi)=>{
     const moveOpts=allGroupOptions.map(o=>`<option value="${o.cat}|${o.gid}" ${o.cat===cat&&o.gid===selectedG.id?'selected':''}>${o.label}</option>`).join('');
     html+=`<div class="prow">
@@ -1316,46 +948,6 @@ function renderSectionPairs(cat){
   html+=`<button class="btn btn-out btn-sm" style="margin-top:8px;" onclick="addP('${cat}',${gi})">+ Agregar pareja</button>
     </div></div>`;
   return html;
-}
-// Genera el siguiente ID de grupo disponible para la categoría, siguiendo
-// el patrón existente (1A, 1B, 1C... / 2A, 2B... / 3A, 3B...).
-function nextGroupId(cat){
-  const prefix={"1era":"1","2da":"2","3era":"3"}[cat];
-  const existentes=grupos[cat].map(g=>g.id);
-  for(let i=0;i<26;i++){
-    const letra=String.fromCharCode(65+i); // A, B, C...
-    const candidato=prefix+letra;
-    if(!existentes.includes(candidato))return candidato;
-  }
-  return prefix+'X'+Date.now(); // fallback extremo, no debería pasar
-}
-async function addGroup(cat){
-  const newId=nextGroupId(cat);
-  grupos[cat].push({id:newId,parejas:[]});
-  grupos[cat].sort((a,b)=>a.id.localeCompare(b.id));
-  state.adminPairsGroup[cat]=newId;
-  await saveGruposVacios();
-  renderA();
-  showToast(`Grupo ${newId} agregado`);
-}
-async function deleteGroup(cat,gid){
-  const g=grupos[cat].find(x=>x.id===gid);
-  if(!g)return;
-  if(g.parejas.length>0){
-    showToast('Solo se pueden borrar grupos vacíos');
-    return;
-  }
-  const ok=confirm(`¿Seguro que querés borrar el Grupo ${gid}? Esta acción no se puede deshacer.`);
-  if(!ok)return;
-  grupos[cat]=grupos[cat].filter(x=>x.id!==gid);
-  // Borrar también cualquier partido/horario residual de ese grupo (no debería
-  // haber, ya que el grupo está vacío, pero por seguridad lo limpiamos igual).
-  await supabaseClient.from('partidos').delete().eq('grupo_id',gid).eq('categoria',cat);
-  partidos=partidos.filter(m=>!(m.grupoId===gid&&m.cat===cat));
-  state.adminPairsGroup[cat]=grupos[cat].length?grupos[cat][0].id:null;
-  await saveGruposVacios();
-  renderA();
-  showToast(`Grupo ${gid} eliminado`);
 }
 function selectPairsGroup(cat,gid){state.adminPairsGroup[cat]=gid;renderA();}
 async function editP(cat,gi,pi,f,v){
@@ -1372,23 +964,16 @@ async function delP(cat,gi,pi){
   await supabaseClient.from('partidos').delete().or(`pareja1_id.eq.${pid},pareja2_id.eq.${pid}`);
   await supabaseClient.from('parejas').delete().eq('id',pid);
   await regenerateMatchesForGroup(cat,grupos[cat][gi].id);
-  // Si el grupo quedó vacío después de borrar esta pareja, lo registramos
-  // como "vacío" para que no se pierda al recargar la página.
-  if(grupos[cat][gi].parejas.length===0) await saveGruposVacios();
   renderA();showToast('Eliminado');
 }
 async function addP(cat,gi){
   const id='p'+Date.now();
   const newPair={id,j1:'Jugadora 1',j2:'Jugadora 2'};
-  const eraVacio=grupos[cat][gi].parejas.length===0;
   grupos[cat][gi].parejas.push(newPair);
   await supabaseClient.from('parejas').insert({
     id,categoria:cat,grupo_id:grupos[cat][gi].id,jugadora1:'Jugadora 1',jugadora2:'Jugadora 2',cardales:false
   });
   await regenerateMatchesForGroup(cat,grupos[cat][gi].id);
-  // El grupo dejó de estar vacío: lo sacamos de la lista persistida de
-  // grupos vacíos (ya queda representado naturalmente por sus parejas).
-  if(eraVacio) await saveGruposVacios();
   renderA();showToast('Pareja agregada');
 }
 async function movePair(cat,gi,pi,target){
@@ -1406,10 +991,6 @@ async function movePair(cat,gi,pi,target){
 
   await regenerateMatchesForGroup(cat,oldGid);
   await regenerateMatchesForGroup(targetCat,targetGid);
-
-  // El grupo de origen puede haber quedado vacío, y el de destino puede
-  // haber dejado de estarlo: actualizamos la lista persistida en ambos casos.
-  await saveGruposVacios();
 
   state.adminPairsGroup[cat]=grupos[cat][gi].id;
   renderA();
@@ -1438,396 +1019,74 @@ async function regenerateMatchesForGroup(cat,gid){
 }
 
 // ====================================================
-// IMPORTAR / LIMPIAR PAREJAS DESDE EXCEL
-// ====================================================
-const PAREJAS_POR_GRUPO = 4; // tamaño estándar de grupo del americano
-
-// Convierte el texto de la columna "Categoría" a la clave interna (1era/2da/3era).
-function normalizarCategoria(txt){
-  const s=String(txt||'').toLowerCase().trim();
-  if(!s) return null;
-  if(s.startsWith('prim')||s.includes('1')) return '1era';
-  if(s.startsWith('seg') ||s.includes('2')) return '2da';
-  if(s.startsWith('terc')||s.includes('3')) return '3era';
-  return null;
-}
-// Normaliza la columna "Grupo": "A" -> "1A", "b" -> "1B", "1A" -> "1A" (según categoría).
-function normalizarGrupoId(cat,txt){
-  const prefix={'1era':'1','2da':'2','3era':'3'}[cat];
-  const s=String(txt||'').toUpperCase().trim().replace(/\s+/g,'');
-  if(!s) return null;
-  return s.startsWith(prefix) ? s : prefix+s;
-}
-// Clave para detectar parejas repetidas (sin importar el orden de las jugadoras).
-function _pairKey(cat,a,b){
-  return cat+'|'+[String(a).toLowerCase().trim(),String(b).toLowerCase().trim()].sort().join('~');
-}
-// Lee una celda probando varias variantes de encabezado.
-function _col(row,...keys){
-  for(const k of keys){ if(row[k]!==undefined && String(row[k]).trim()!=='') return String(row[k]); }
-  return '';
-}
-
-// 1. Descargar la plantilla Excel para importar parejas
-function descargarPlantillaParejas(){
-  if(typeof XLSX==='undefined'){showToast('Error: librería Excel no cargada.');return;}
-  const wb=XLSX.utils.book_new();
-  const ws=XLSX.utils.aoa_to_sheet([
-    ['Jugador 1','Jugador 2','Categoría','Grupo'],
-    ['Gabriela Scalise','Raquel Gabriel','1era','A'],
-    ['Coni Cababie','Jorgelina Alonso','1era','B'],
-    ['Mariela Bobba','Vanesa Ali','2da',''],
-    ['Verónica Lamas','Adriana Sibaja','3era',''],
-  ]);
-  ws['!cols']=[{wch:24},{wch:24},{wch:12},{wch:8}];
-  XLSX.utils.book_append_sheet(wb,ws,'Parejas');
-  XLSX.writeFile(wb,'plantilla_parejas.xlsx');
-  showToast('Plantilla descargada. Completala y volvé a importarla.');
-}
-
-// Busca (o crea) un grupo con cupo libre en la categoría, para el reparto automático.
-function _grupoConCupo(cat){
-  let g=grupos[cat].find(x=>x.parejas.length<PAREJAS_POR_GRUPO);
-  if(g) return g;
-  const nid=nextGroupId(cat);
-  g={id:nid,parejas:[]};
-  grupos[cat].push(g);
-  grupos[cat].sort((a,b)=>a.id.localeCompare(b.id));
-  return g;
-}
-// Busca (o crea) un grupo por su id explícito.
-function _grupoPorId(cat,gid){
-  let g=grupos[cat].find(x=>x.id===gid);
-  if(!g){
-    g={id:gid,parejas:[]};
-    grupos[cat].push(g);
-    grupos[cat].sort((a,b)=>a.id.localeCompare(b.id));
-  }
-  return g;
-}
-
-// 2. Importar parejas desde un Excel
-async function importarParejasExcel(input){
-  const file=input.files[0];
-  input.value=''; // permite reimportar el mismo archivo
-  if(!file) return;
-  if(typeof XLSX==='undefined'){showToast('Error: librería Excel no cargada.');return;}
-
-  const reader=new FileReader();
-  reader.onload=async function(e){
-    try{
-      const data=new Uint8Array(e.target.result);
-      const wb=XLSX.read(data,{type:'array'});
-      const ws=wb.Sheets[wb.SheetNames[0]];
-      const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
-      if(!rows.length){showToast('El archivo está vacío o no tiene el formato correcto.');return;}
-
-      // Parejas ya existentes (para no duplicar)
-      const existentes=new Set();
-      ["1era","2da","3era"].forEach(c=>grupos[c].forEach(g=>g.parejas.forEach(p=>existentes.add(_pairKey(c,p.j1,p.j2)))));
-
-      const pairsToInsert=[];      // filas para insertar en Supabase
-      const gruposTocados=new Set(); // "cat|gid" que necesitan regenerar partidos
-      let imported=0; const dupes=[]; const errors=[];
-      const base=Date.now(); let k=0;
-
-      rows.forEach((row,idx)=>{
-        const nfila=idx+2; // fila 1 = encabezados
-        const j1=_col(row,'Jugador 1','Jugador1','jugador 1','jugador1','Jugadora 1','Jugadora1','J1').trim();
-        const j2=_col(row,'Jugador 2','Jugador2','jugador 2','jugador2','Jugadora 2','Jugadora2','J2').trim();
-        const catTxt=_col(row,'Categoría','Categoria','categoría','categoria','Cat');
-        const grpTxt=_col(row,'Grupo','grupo','Zona','zona','G');
-
-        if(!j1||!j2){ errors.push('Fila '+nfila+': falta Jugador 1 o Jugador 2'); return; }
-        const cat=normalizarCategoria(catTxt);
-        if(!cat){ errors.push('Fila '+nfila+': categoría "'+catTxt+'" inválida (usá 1era, 2da o 3era)'); return; }
-
-        const key=_pairKey(cat,j1,j2);
-        if(existentes.has(key)){ dupes.push(j1+' / '+j2); return; }
-        existentes.add(key);
-
-        // Grupo destino: explícito o reparto automático en grupos de 4
-        const gidExpl=normalizarGrupoId(cat,grpTxt);
-        const g = gidExpl ? _grupoPorId(cat,gidExpl) : _grupoConCupo(cat);
-
-        const id='p'+base+'_'+(k++);
-        g.parejas.push({id,j1,j2,cardales:false});
-        pairsToInsert.push({id,categoria:cat,grupo_id:g.id,jugadora1:j1,jugadora2:j2,cardales:false});
-        gruposTocados.add(cat+'|'+g.id);
-        imported++;
-      });
-
-      if(pairsToInsert.length){
-        await supabaseClient.from('parejas').insert(pairsToInsert);
-        // Regenerar los partidos (round-robin) de cada grupo afectado
-        for(const key of gruposTocados){
-          const [c,gid]=key.split('|');
-          await regenerateMatchesForGroup(c,gid);
-        }
-        await saveGruposVacios();
-      }
-
-      // Actualizar el grupo seleccionado en pantalla si hace falta
-      ["1era","2da","3era"].forEach(c=>{
-        if(grupos[c].length && !grupos[c].some(g=>g.id===state.adminPairsGroup[c])) state.adminPairsGroup[c]=grupos[c][0].id;
-      });
-      renderA();
-
-      let msg=imported+' pareja'+(imported!==1?'s':'')+' importada'+(imported!==1?'s':'')+' correctamente.';
-      if(dupes.length)  msg+=' '+dupes.length+' ya existían (ignoradas): '+dupes.slice(0,3).join(', ')+(dupes.length>3?'…':'');
-      if(errors.length) msg+=' Errores: '+errors.slice(0,3).join('; ')+(errors.length>3?'…':'');
-      showToast(imported?('✅ '+msg):('Sin cambios. '+msg));
-      if(errors.length) alert(msg);
-    }catch(err){
-      console.error(err);
-      showToast('Error al leer el archivo: '+err.message);
-    }
-  };
-  reader.readAsArrayBuffer(file);
-}
-
-// 3. Limpiar TODAS las parejas (y sus datos derivados) con doble confirmación
-async function limpiarParejasUI(){
-  if(!confirm('⚠️ Limpiar parejas\n\nEsto eliminará TODAS las parejas de las tres categorías, junto con sus partidos, horarios y playoffs.\nSe mantiene la configuración (reglamento, desempate, sponsors, etc.).\n\n¿Querés continuar?')) return;
-  if(!confirm('⛔ Segunda confirmación\n\n¿Estás segura de borrar todas las parejas y resultados?\nEsta acción no se puede deshacer.')) return;
-
-  try{
-    await supabaseClient.from('partidos').delete().neq('id','');
-    await supabaseClient.from('parejas').delete().neq('id','');
-    await supabaseClient.from('horarios').delete().neq('partido_id','');
-    await supabaseClient.from('playoff').delete().neq('categoria','');
-    await supabaseClient.from('configuracion').delete().eq('clave','grupos_vacios');
-
-    grupos={"1era":[],"2da":[],"3era":[]};
-    partidos=[];
-    matchSchedule={};
-    playoffData={"1era":null,"2da":null,"3era":null};
-    ["1era","2da","3era"].forEach(c=>{state.adminPairsGroup[c]=null;});
-
-    renderA();
-    showToast('✅ Parejas eliminadas. Ya podés importar las nuevas desde el Excel.');
-  }catch(err){
-    console.error(err);
-    showToast('Error al limpiar: '+err.message);
-  }
-}
-
-// ====================================================
-// CANCHAS Y HORARIOS — ahora muestra TODAS las categorías juntas
+// CANCHAS Y HORARIOS
 // ====================================================
 function renderSectionSched(){
-  // Sub-tabs internos: Grupos | Playoff
-  let html=`<div class="toggle-group" style="margin-bottom:14px;">
-    <button class="toggle-btn ${state.schedSubTab==='grupos'?'active':''}" onclick="switchSchedSubTab('grupos')">Grupos</button>
-    <button class="toggle-btn ${state.schedSubTab==='playoff'?'active':''}" onclick="switchSchedSubTab('playoff')">Playoff</button>
-  </div>`;
-
-  if(state.schedSubTab==='grupos'){
-    html+=renderSchedGrupos();
-  }else{
-    html+=renderSchedPlayoff();
-  }
-  return html;
-}
-
-function switchSchedSubTab(tab){
-  state.schedSubTab=tab;
-  renderAContent();
-}
-
-// ---- Sub-tab GRUPOS: solo partidos de la fase de grupos, todas las categorías ----
-function renderSchedGrupos(){
-  let groupMatches=[];
+  let allMatches=[];
   ["1era","2da","3era"].forEach(cat=>{
-    const ms=partidos
+    const groupMatches=partidos
       .filter(m=>m.cat===cat&&!m.played)
       .map(m=>({...m,catLabel:CAT_LABELS[cat]}))
       .sort((a,b)=>a.grupoId.localeCompare(b.grupoId));
-    groupMatches=groupMatches.concat(ms);
-  });
-
-  let html=`<div class="ibar">Asigná cancha y hora a los partidos de grupos de las 3 categorías, ordenados por categoría y grupo.</div>`;
-  if(!groupMatches.length) return html+'<div class="empty">No hay partidos de grupos pendientes.</div>';
-
-  // Para el selector "a continuación de" usamos todos los partidos (grupos + playoff)
-  const allForRef=buildAllMatchOptions();
-  const usedAsReference=buildUsedAsReference(allForRef.all);
-
-  html+=`<div class="sched-grid">`;
-  groupMatches.forEach(m=>{
-    html+=renderSchedCard(m,allForRef.options,usedAsReference);
-  });
-  html+=`</div>`;
-  return html;
-}
-
-// ---- Sub-tab PLAYOFF: partidos de playoff por categoría y ronda ----
-// Definición fija de las rondas y cruces de playoff por modo.
-// Usamos IDs fijos (po_1era_qf1, etc.) independientes del cuadro,
-// así los horarios se pueden cargar antes de que las parejas estén definidas.
-function getPlayoffSlots(cat){
-  const mode=playoffMode[cat];
-  const slots=[];
-  if(mode==='cuartos'){
-    slots.push({roundName:'Cuartos de final',matches:[
-      {slotId:`po_${cat}_qf1`,label:'QF 1'},
-      {slotId:`po_${cat}_qf2`,label:'QF 2'},
-      {slotId:`po_${cat}_qf3`,label:'QF 3'},
-      {slotId:`po_${cat}_qf4`,label:'QF 4'},
-    ]});
-  }
-  slots.push({roundName:'Semifinales',matches:[
-    {slotId:`po_${cat}_sf1`,label:'SF 1'},
-    {slotId:`po_${cat}_sf2`,label:'SF 2'},
-  ]});
-  slots.push({roundName:'Final',matches:[
-    {slotId:`po_${cat}_f1`,label:'Final'},
-  ]});
-  return slots;
-}
-
-// Intenta vincular un slot fijo con el partido real de playoff ya creado
-// para mostrar los nombres de las parejas si ya están definidas.
-function matchForSlot(cat,slotId){
-  if(!playoffData[cat])return null;
-  // El ID del partido real de playoff tiene la forma sf1, qf2, f1, etc.
-  // El slotId tiene la forma po_1era_sf1 → extraemos la parte final.
-  const key=slotId.replace(`po_${cat}_`,'');
-  for(const r of playoffData[cat].rounds){
-    const m=r.matches.find(x=>x.id===key);
-    if(m)return m;
-  }
-  return null;
-}
-
-function renderSchedPlayoff(){
-  const catLabels={"1era":"1º Categoría","2da":"2º Categoría","3era":"3º Categoría"};
-  let html=`<div class="ibar">Asigná cancha y hora a los cruces de playoff. Los slots están disponibles desde el inicio — los nombres de las parejas aparecen automáticamente cuando se genera el cuadro.</div>`;
-
-  const allForRef=buildAllMatchOptions();
-  const usedAsReference=buildUsedAsReference(allForRef.all);
-
-  ["1era","2da","3era"].forEach(cat=>{
-    const catLabel=catLabels[cat];
-    const slots=getPlayoffSlots(cat);
-    html+=`<div style="margin-top:1.2rem;font-size:13px;font-weight:600;color:#111;padding-bottom:6px;border-bottom:2px solid #111;">${catLabel}</div>`;
-    slots.forEach(round=>{
-      html+=`<div class="phase-label" style="margin-top:.8rem;">${round.roundName}</div>`;
-      html+=`<div class="sched-grid">`;
-      round.matches.forEach(slot=>{
-        const sched=getSched(slot.slotId);
-        const realMatch=matchForSlot(cat,slot.slotId);
-        let n1='Por definir',n2='Por definir';
-        if(realMatch){
-          if(realMatch.p1) n1=pJ1(realMatch.p1)+' / '+pJ2(realMatch.p1);
-          if(realMatch.p2) n2=pJ1(realMatch.p2)+' / '+pJ2(realMatch.p2);
-        }
-        const otherOpts=allForRef.options
-          .filter(o=>o.id!==slot.slotId)
-          .filter(o=>!usedAsReference.has(o.id) || sched.afterMatchId===o.id)
-          .map(o=>`<option value="${o.id}" ${sched.afterMatchId===o.id?'selected':''}>${o.label}</option>`).join('');
-        html+=`<div class="sched-card">
-          <div class="sched-card-hdr">${catLabel} — ${round.roundName} — ${slot.label}</div>
-          <div class="sched-card-body">
-            <div class="sched-card-vs" style="color:${realMatch?'#111':'var(--gray-light)'};">
-              <strong>${n1}</strong><br><span style="color:var(--gray-light);">vs</span><br><strong>${n2}</strong>
-            </div>
-            <div class="sched-mini-row">
-              <div><label style="margin-top:0;font-size:11px;">Cancha</label>
-                <input type="number" min="1" max="20" placeholder="N°" id="cancha_${slot.slotId}" value="${sched.cancha}" onchange="saveSchedGeneric('${slot.slotId}')"></div>
-              <div><label style="margin-top:0;font-size:11px;">Hora</label>
-                <input type="time" id="hora_${slot.slotId}" value="${sched.hora}" ${sched.after?'disabled':''} onchange="saveSchedGeneric('${slot.slotId}')"></div>
-            </div>
-            <div class="acont-after-toggle">
-              <input type="checkbox" id="after_${slot.slotId}" ${sched.after?'checked':''} onchange="toggleAfter('${slot.slotId}')">
-              <label style="margin:0;" for="after_${slot.slotId}">A continuación de</label>
-            </div>
-            ${sched.after?`<div style="margin-top:8px;"><label style="margin-top:0;font-size:11px;">Partido que tiene que terminar antes</label>
-              <select id="afterMatch_${slot.slotId}" onchange="saveAfterMatch('${slot.slotId}')">
-                <option value="">— Elegí un partido —</option>
-                ${otherOpts}
-              </select>
-            </div>`:''}
-          </div>
-        </div>`;
-      });
-      html+=`</div>`;
-    });
-  });
-
-  return html;
-}
-
-// ---- Helpers compartidos ----
-function buildAllMatchOptions(){
-  const catLabels={"1era":"1º Categoría","2da":"2º Categoría","3era":"3º Categoría"};
-  const all=[];
-  ["1era","2da","3era"].forEach(cat=>{
-    partidos.filter(m=>m.cat===cat&&!m.played).forEach(m=>all.push({...m,catLabel:CAT_LABELS[cat]}));
+    allMatches=allMatches.concat(groupMatches);
     if(playoffData[cat]){
-      playoffData[cat].rounds.flatMap(r=>
-        r.matches.filter(m=>m.p1&&m.p2&&(!m.sets||!m.sets.length))
-          .map(m=>({...m,isPlayoff:true,roundName:r.name,cat,catLabel:CAT_LABELS[cat]}))
-      ).forEach(m=>all.push(m));
+      const poMatches=playoffData[cat].rounds.flatMap(r=>
+        r.matches.filter(m=>!m.sets||!m.sets.length).map(m=>({...m,isPlayoff:true,roundName:r.name,cat,catLabel:CAT_LABELS[cat]}))
+      );
+      allMatches=allMatches.concat(poMatches);
     }
   });
-  // Agregar slots fijos de playoff (sin cuadro) para que aparezcan en "A continuación de"
-  ["1era","2da","3era"].forEach(cat=>{
-    getPlayoffSlots(cat).forEach(round=>{
-      round.matches.forEach(slot=>{
-        const yaEsta=all.some(x=>(x.id||x.slotId)===slot.slotId);
-        if(!yaEsta) all.push({id:slot.slotId,isPlayoffSlot:true,cat,catLabel:CAT_LABELS[cat],roundName:round.roundName,slotLabel:slot.label});
-      });
-    });
-  });
-  const options=all.map(m=>({
-    id:m.id||m.slotId,
-    label:m.isPlayoffSlot
-      ?`${catLabels[m.cat]} — ${m.roundName} — ${m.slotLabel}`
-      :m.isPlayoff
-      ?`Cat. ${m.catLabel} — ${m.roundName}: ${m.p1?pJ1(m.p1):'?'} vs ${m.p2?pJ1(m.p2):'?'}`
-      :`Cat. ${m.catLabel} — Grupo ${m.grupoId}: ${pJ1(m.p1)} vs ${pJ1(m.p2)}`
-  }));
-  return{all,options};
-}
-function buildUsedAsReference(allMatches){
-  return new Set(
+
+  let html=`<div class="ibar">Asigná cancha y hora a los partidos de las 3 categorías. Si todavía no sabés la hora, elegí "A continuación de" y seleccioná qué partido tiene que terminar antes.</div>`;
+  if(!allMatches.length) return html+'<div class="empty">No hay partidos pendientes de programar.</div>';
+
+  const usedAsReference=new Set(
     allMatches
       .filter(m=>getSched(m.id).after && getSched(m.id).afterMatchId)
       .map(m=>getSched(m.id).afterMatchId)
   );
-}
-function renderSchedCard(m,allMatchOptions,usedAsReference){
-  const sched=getSched(m.id);
-  const label=m.isPlayoff?`Cat. ${m.catLabel} — ${m.roundName}`:`Cat. ${m.catLabel} — Grupo ${m.grupoId}`;
-  const n1=m.p1?(pJ1(m.p1)+' / '+pJ2(m.p1)):'Por definir';
-  const n2=m.p2?(pJ1(m.p2)+' / '+pJ2(m.p2)):'Por definir';
-  const otherOpts=allMatchOptions
-    .filter(o=>o.id!==m.id)
-    .filter(o=>!usedAsReference.has(o.id) || sched.afterMatchId===o.id)
-    .map(o=>`<option value="${o.id}" ${sched.afterMatchId===o.id?'selected':''}>${o.label}</option>`).join('');
-  return `<div class="sched-card">
-    <div class="sched-card-hdr">${label}</div>
-    <div class="sched-card-body">
-      <div class="sched-card-vs"><strong>${n1}</strong><br><span style="color:var(--gray-light);">vs</span><br><strong>${n2}</strong></div>
-      <div class="sched-mini-row">
-        <div><label style="margin-top:0;font-size:11px;">Cancha</label>
-          <input type="number" min="1" max="20" placeholder="N°" id="cancha_${m.id}" value="${sched.cancha}" onchange="saveSchedGeneric('${m.id}')"></div>
-        <div><label style="margin-top:0;font-size:11px;">Hora</label>
-          <input type="time" id="hora_${m.id}" value="${sched.hora}" ${sched.after?'disabled':''} onchange="saveSchedGeneric('${m.id}')"></div>
+  const allMatchOptions=allMatches.map(m=>{
+    const label=m.isPlayoff
+      ? `Cat. ${m.catLabel} — ${m.roundName}: ${m.p1?pJ1(m.p1):'?'} vs ${m.p2?pJ1(m.p2):'?'}`
+      : `Cat. ${m.catLabel} — Grupo ${m.grupoId}: ${pJ1(m.p1)} vs ${pJ1(m.p2)}`;
+    return{id:m.id,label};
+  });
+
+  html+=`<div class="sched-grid">`;
+  allMatches.forEach(m=>{
+    const sched=getSched(m.id);
+    const label=m.isPlayoff?`Cat. ${m.catLabel} — ${m.roundName}`:`Cat. ${m.catLabel} — Grupo ${m.grupoId}`;
+    const n1=m.p1?(pJ1(m.p1)+' / '+pJ2(m.p1)):'Por definir';
+    const n2=m.p2?(pJ1(m.p2)+' / '+pJ2(m.p2)):'Por definir';
+    const otherOpts=allMatchOptions
+      .filter(o=>o.id!==m.id)
+      .filter(o=>!usedAsReference.has(o.id) || sched.afterMatchId===o.id)
+      .map(o=>`<option value="${o.id}" ${sched.afterMatchId===o.id?'selected':''}>${o.label}</option>`).join('');
+    html+=`<div class="sched-card">
+      <div class="sched-card-hdr">${label}</div>
+      <div class="sched-card-body">
+        <div class="sched-card-vs"><strong>${n1}</strong><br><span style="color:var(--gray-light);">vs</span><br><strong>${n2}</strong></div>
+        <div class="sched-mini-row">
+          <div><label style="margin-top:0;font-size:11px;">Cancha</label>
+            <input type="number" min="1" max="20" placeholder="N°" id="cancha_${m.id}" value="${sched.cancha}" onchange="saveSchedGeneric('${m.id}')"></div>
+          <div><label style="margin-top:0;font-size:11px;">Hora</label>
+            <input type="time" id="hora_${m.id}" value="${sched.hora}" ${sched.after?'disabled':''} onchange="saveSchedGeneric('${m.id}')"></div>
+        </div>
+        <div class="acont-after-toggle">
+          <input type="checkbox" id="after_${m.id}" ${sched.after?'checked':''} onchange="toggleAfter('${m.id}')">
+          <label style="margin:0;" for="after_${m.id}">A continuación de</label>
+        </div>
+        ${sched.after?`<div style="margin-top:8px;"><label style="margin-top:0;font-size:11px;">Partido que tiene que terminar antes</label>
+          <select id="afterMatch_${m.id}" onchange="saveAfterMatch('${m.id}')">
+            <option value="">— Elegí un partido —</option>
+            ${otherOpts}
+          </select>
+        </div>`:''}
       </div>
-      <div class="acont-after-toggle">
-        <input type="checkbox" id="after_${m.id}" ${sched.after?'checked':''} onchange="toggleAfter('${m.id}')">
-        <label style="margin:0;" for="after_${m.id}">A continuación de</label>
-      </div>
-      ${sched.after?`<div style="margin-top:8px;"><label style="margin-top:0;font-size:11px;">Partido que tiene que terminar antes</label>
-        <select id="afterMatch_${m.id}" onchange="saveAfterMatch('${m.id}')">
-          <option value="">— Elegí un partido —</option>
-          ${otherOpts}
-        </select>
-      </div>`:''}
-    </div>
-  </div>`;
+    </div>`;
+  });
+  html+=`</div>`;
+  return html;
 }
 async function saveSchedToDB(mId){
   const s=getSched(mId);
@@ -1836,52 +1095,61 @@ async function saveSchedToDB(mId){
   });
 }
 
-// Devuelve el partido (si existe) que ya tiene asignada la misma cancha + hora
-// que se está por guardar, excluyendo al propio partido que se está editando.
-// Solo compara contra partidos que también tengan cancha Y hora cargadas
-// (si falta alguno de los dos datos, no se considera conflicto).
 function findScheduleConflict(mId,cancha,hora){
-  if(!cancha||!hora)return null; // sin ambos datos no hay forma de chocar
+  // Normaliza a string para comparar sin importar si Supabase devolvió número o string
+  if(!cancha||!hora)return null;
+  const cStr=String(cancha).trim();
+  const hStr=String(hora).trim();
   const allMatchIds=Object.keys(matchSchedule);
   for(const otherId of allMatchIds){
     if(otherId===mId)continue;
     const other=matchSchedule[otherId];
-    if(!other||other.after)continue; // "a continuación de" no tiene hora fija, no choca
-    if(other.cancha===cancha && other.hora===hora){
+    // Si el otro no existe, es "a continuación" o no tiene cancha+hora completos → salteamos
+    if(!other||other.after)continue;
+    const otherC=String(other.cancha||'').trim();
+    const otherH=String(other.hora||'').trim();
+    if(!otherC||!otherH)continue;
+    if(otherC===cStr&&otherH===hStr){
+      // Solo reportar conflicto si el partido que ocupa ese slot todavía existe
+      // y todavía está pendiente (no fue jugado ni eliminado)
       const m=findMatchById(otherId);
-      return m||{id:otherId};
+      if(!m)continue; // el partido ya no existe, ignoramos el slot
+      const isStillPending=partidos.find(p=>p.id===otherId&&!p.played)||
+        ["1era","2da","3era"].some(cat=>playoffData[cat]&&
+          playoffData[cat].rounds.some(r=>r.matches.some(pm=>pm.id===otherId)));
+      if(!isStillPending)continue; // el partido ya fue jugado, el slot está libre
+      return m;
     }
   }
   return null;
 }
 
 async function saveSchedGeneric(mId){
+  // Leemos AMBOS campos del DOM juntos para tener el estado actual completo
   const c=document.getElementById(`cancha_${mId}`)?.value||'';
   const h=document.getElementById(`hora_${mId}`)?.value||'';
+
+  // Actualizamos en memoria PRIMERO (así el partido que se está editando
+  // ya tiene su nuevo valor antes de que findScheduleConflict lo excluya)
+  const cur=getSched(mId);
+  matchSchedule[mId]={...cur,cancha:c,hora:h};
 
   const conflict=findScheduleConflict(mId,c,h);
   if(conflict){
     const n1=conflict.p1?pNombre(conflict.p1):'?',n2=conflict.p2?pNombre(conflict.p2):'?';
     showToast(`⚠️ Cancha ${c} a las ${h} ya está asignada a: ${n1} vs ${n2}`);
-    // Revertimos los inputs al valor anterior guardado, para que no quede
-    // una asignación duplicada cargada en pantalla sin haberse guardado.
-    const prev=getSched(mId);
+    // Revertimos en memoria al valor anterior
+    matchSchedule[mId]={...cur};
     const cInput=document.getElementById(`cancha_${mId}`);
     const hInput=document.getElementById(`hora_${mId}`);
-    if(cInput)cInput.value=prev.cancha||'';
-    if(hInput)hInput.value=prev.hora||'';
+    if(cInput)cInput.value=cur.cancha||'';
+    if(hInput)hInput.value=cur.hora||'';
     return;
   }
 
-  const cur=getSched(mId);
-  matchSchedule[mId]={...cur,cancha:c,hora:h};
   await saveSchedToDB(mId);
   renderJContent();showToast('Horario guardado');
 }
-// El checkbox queda tildado al instante (estado del DOM tras el click del usuario).
-// Guardamos en memoria y en la base, y si algo falla avisamos por toast en vez
-// de fallar en silencio (lo cual antes podía dejar el checkbox desincronizado
-// al volver a renderizar).
 async function toggleAfter(mId){
   const checkboxEl=document.getElementById(`after_${mId}`);
   const checked=checkboxEl.checked;
@@ -2017,21 +1285,17 @@ function renderSectionPlayoff(cat){
   const{qualFirsts,qualSeconds,cfg}=getSeeds(cat);
   const po=playoffData[cat];
   const isPreview=!po||po.isPreview;
-  const totalClasificados=qualFirsts.length+qualSeconds.length;
 
-  html+=`<div class="ibar">Modo de clasificación elegido para esta categoría: <strong>${CLASIF_LABELS[clasificacionMode[cat]]}</strong> (se cambia desde la pestaña "Clasificación").</div>`;
-  html+=`<div style="font-size:12px;font-weight:500;color:var(--pink);margin-bottom:8px;">Clasificados actuales (${totalClasificados}/${cfg.total})</div>`;
+  html+=`<div style="font-size:12px;font-weight:500;color:var(--pink);margin-bottom:8px;">Clasificados actuales (${qualFirsts.length+qualSeconds.length}/${cfg.total})</div>`;
   html+=`<div class="grupo"><div class="table-scroll"><table class="grupo-table"><thead><tr><th>#</th><th class="thl">Pareja</th><th>Grupo</th><th>Vía</th></tr></thead><tbody>`;
-  [...qualFirsts,...qualSeconds].slice(0,cfg.total).forEach((s,i)=>{
+  [...qualFirsts,...qualSeconds].forEach((s,i)=>{
     const shade=i%2===1;
     html+=`<tr class="${shade?'shade':''}"><td><span class="pos-badge ${i<qualFirsts.length?'pos-1':'pos-2'}">${i+1}</span></td><td class="tdl"><div class="pnames"><span>${s.j1}</span><span>${s.j2}</span></div></td><td>${s.grupoId}</td><td>${i<qualFirsts.length?'1°':'Mejor 2°'}</td></tr>`;
   });
   html+=`</tbody></table></div></div>`;
 
-  if(totalClasificados<cfg.total){
-    html+=`<div class="ibar" style="margin-top:10px;">Todavía faltan resultados de grupos para completar los ${cfg.total} clasificados que necesita este formato de playoff.</div>`;
-  }else if(totalClasificados>cfg.total){
-    html+=`<div class="ibar" style="margin-top:10px;background:#fffbeb;border-color:#fde047;color:#854d0e;">⚠️ El modo de clasificación elegido (${CLASIF_LABELS[clasificacionMode[cat]]}) da ${totalClasificados} clasificados, pero el formato de playoff (${cfg.roundName}) solo tiene ${cfg.total} cupos. Para el cuadro solo se van a usar los primeros ${cfg.total} por orden de mérito (se ven resaltados arriba). Revisá si el formato de playoff y el modo de clasificación son coherentes entre sí.</div>`;
+  if(qualFirsts.length+qualSeconds.length<cfg.total){
+    html+=`<div class="ibar" style="margin-top:10px;">Todavía faltan resultados de grupos para completar los ${cfg.total} clasificados.</div>`;
   }
 
   html+=`<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">
@@ -2043,7 +1307,7 @@ function renderSectionPlayoff(cat){
   if(po){
     html+=`<div style="margin-top:1.2rem;">`;
     if(po.isPreview) html+=`<div class="preview-banner">⚠️ Vista previa — todavía podés cambiar parejas y formato antes de confirmar.</div>`;
-    html+=renderBracketTree(po,cat);
+    html+=renderBracketTree(po);
     const champ=getChampion(cat);
     if(champ){
       const p=getP(champ);
@@ -2099,23 +1363,17 @@ async function setPlayoffMode(cat,mode){
   await supabaseClient.from('configuracion').upsert({clave:'playoff_mode',valor:playoffMode});
   renderA();
 }
-// Arma los cruces siempre 1ro vs 2do (nunca 1ro-vs-1ro ni 2do-vs-2do),
-// emparejando el mejor 1ro con el mejor 2do disponible que NO sea de su mismo grupo,
-// y así sucesivamente. Si el mejor 2do es del mismo grupo que el 1ro que le toca,
-// se intercambia con el siguiente 2do disponible que sí sea válido.
-function buildFirstVsSecondPairing(firsts, seconds){
+function buildFirstVsSecondPairing(firsts,seconds){
   const usedSeconds=new Array(seconds.length).fill(false);
-  const pairs=[]; // {first, second}
+  const pairs=[];
   firsts.forEach(f=>{
-    // Buscar el mejor 2do disponible que no sea de su mismo grupo
     let chosenIdx=-1;
     for(let i=0;i<seconds.length;i++){
       if(usedSeconds[i])continue;
-      if(seconds[i].grupoId===f.grupoId)continue; // evitar mismo grupo
+      if(seconds[i].grupoId===f.grupoId)continue;
       chosenIdx=i;
       break;
     }
-    // Si todos los disponibles son del mismo grupo (caso límite), tomar el mejor disponible igual
     if(chosenIdx===-1){
       for(let i=0;i<seconds.length;i++){
         if(!usedSeconds[i]){chosenIdx=i;break;}
@@ -2130,17 +1388,9 @@ function buildFirstVsSecondPairing(firsts, seconds){
   });
   return pairs;
 }
-
-// Distribuye los cruces (1ro vs 2do) en el cuadro de playoff respetando el
-// "seeding" clásico: el cruce del mejor 1ro va en una punta del cuadro, el del
-// 2do mejor 1ro en la otra punta, etc. — para que los mejores se encuentren
-// recién en semis/final, no en la primera ronda.
 function seedPositionsForBracket(n){
-  // n = cantidad de cruces de primera ronda (2 para semis, 4 para cuartos)
-  // Devuelve el orden de posiciones estándar de un bracket de single elimination
   if(n===2) return [0,1];
-  if(n===4) return [0,3,1,2]; // 1° arriba, 4° abajo del mismo lado, 2° y 3° del otro lado
-  // fallback genérico (no debería usarse con los formatos actuales: 4 u 8)
+  if(n===4) return [0,3,1,2];
   const arr=[0];
   let size=1;
   while(size<n){
@@ -2151,24 +1401,16 @@ function seedPositionsForBracket(n){
   }
   return arr.slice(0,n);
 }
-
 function buildRoundsForMode(cat,seedsData){
   const cfg=getPlayoffConfig(cat);
-  // Usamos las listas YA filtradas según el modo de clasificación elegido
-  // en la pestaña "Clasificación" (todos los 1ros, o 1ros + N mejores 2dos),
-  // en vez de recortar artificialmente a la mitad del cuadro de playoff.
-  const qualFirsts=seedsData.qualFirsts||[];
-  const qualSeconds=seedsData.qualSeconds||[];
-  const slotsNeeded=cfg.total/2; // cantidad de cruces 1ro-vs-2do en la primera ronda
-
+  const{firsts,seconds}=seedsData;
+  const slotsNeeded=cfg.total/2;
   const pairs=buildFirstVsSecondPairing(
-    qualFirsts.slice(0,slotsNeeded),
-    qualSeconds.slice(0,slotsNeeded)
+    firsts.slice(0,slotsNeeded),
+    seconds.slice(0,slotsNeeded)
   );
-
   const order=seedPositionsForBracket(slotsNeeded);
   const orderedPairs=order.map(i=>pairs[i]||{first:null,second:null});
-
   if(cfg.total===4){
     return[
       {name:'Semifinales',matches:[
@@ -2243,6 +1485,30 @@ async function delPO(cat,ri,mi){
   const m=playoffData[cat].rounds[ri].matches[mi];m.sets=[];m.winner=null;
   await savePlayoffToDB(cat);
   renderA();renderJContent();showToast('Borrado');
+}
+
+function descargarParejas(){
+  const catLabels={"1era":"1° Categoría","2da":"2° Categoría","3era":"3° Categoría"};
+  let rows=[["Categoría","Grupo","Jugadora 1","Jugadora 2"]];
+  ["1era","2da","3era"].forEach(cat=>{
+    grupos[cat].forEach(g=>{
+      g.parejas.forEach(p=>{
+        rows.push([catLabels[cat],`Grupo ${g.id}`,p.j1,p.j2]);
+      });
+    });
+  });
+  // Construir CSV
+  const csv=rows.map(r=>r.map(cell=>`"${String(cell).replace(/"/g,'""')}"`).join(",")).join("\n");
+  const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;
+  a.download="parejas_torneo.csv";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast("Archivo descargado ✓");
 }
 
 function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200);}
