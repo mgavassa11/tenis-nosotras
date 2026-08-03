@@ -47,6 +47,22 @@ function catLabel(cat){
     : CAT_NAMES_DEFAULT[cat];
 }
 
+// Nombres personalizados de grupos: {grupo_id: "nombre visible"}
+// La clave es el grupo_id interno (ej "1A"); el valor es lo que se muestra.
+let customGroupNames={};
+
+// Devuelve el nombre visible de un grupo.
+// Si tiene nombre personalizado lo usa tal cual; si no, devuelve "Grupo X".
+function groupLabel(gid){
+  const custom=customGroupNames&&customGroupNames[gid]&&String(customGroupNames[gid]).trim();
+  return custom?custom:`Grupo ${gid}`;
+}
+// Igual pero sin el prefijo "Grupo" para lugares compactos (devuelve el id o el nombre custom)
+function groupLabelShort(gid){
+  const custom=customGroupNames&&customGroupNames[gid]&&String(customGroupNames[gid]).trim();
+  return custom?custom:gid;
+}
+
 // ---- ESTADO GLOBAL (se llena leyendo de Supabase) ----
 let grupos={"1era":[],"2da":[],"3era":[]};
 let partidos=[];
@@ -194,6 +210,7 @@ async function loadAllData(){
     if(row.clave==='tiebreak_order') tiebreakOrder=row.valor;
     if(row.clave==='reglamento') reglamentoText=row.valor||'';
     if(row.clave==='cat_names') customCatNames={...CAT_NAMES_DEFAULT,...row.valor};
+    if(row.clave==='group_names') customGroupNames={...row.valor};
   });
 
   ["1era","2da","3era"].forEach(c=>{
@@ -492,7 +509,7 @@ function renderPublicView(cat,subTab,targetElId){
     const stats=getStats(g.id,cat);
     const cut=getCutPos();
     html+=`<div class="grupo">
-      <div class="grupo-header">Grupo ${g.id} · ${g.parejas.length} parejas</div>
+      <div class="grupo-header">${groupLabel(g.id)} · ${g.parejas.length} parejas</div>
       <div class="table-scroll"><table class="grupo-table">
         <thead><tr><th style="width:26px">#</th><th class="thl">Pareja</th><th>Pts</th><th>G</th><th>P</th><th>GG</th><th>GP</th><th>Dif</th></tr></thead>
         <tbody>`;
@@ -526,7 +543,7 @@ function renderPublicView(cat,subTab,targetElId){
         html+=`<tr class="${shade?'shade':''} ${isCut?'cut-row':''}">
           <td><span class="pos-badge ${cl?'pos-1':''}">${i+1}</span></td>
           <td class="tdl"><div class="pnames"><span>${s.j1}</span><span>${s.j2}</span></div></td>
-          <td>${s.grupoId}</td><td>${s.pts}</td><td>${s.gg}</td><td>${s.gp}</td><td>${s.bal>0?'+':''}${s.bal}</td>
+          <td>${groupLabelShort(s.grupoId)}</td><td>${s.pts}</td><td>${s.gg}</td><td>${s.gp}</td><td>${s.bal>0?'+':''}${s.bal}</td>
         </tr>`;
       });
       html+=`</tbody></table></div>
@@ -548,7 +565,7 @@ function renderPublicView(cat,subTab,targetElId){
 function renderMatrixTable(g,cat){
   const pairs=g.parejas;
   const fullLabel=p=>`<span class="pair-line">${p.j1}</span><span class="pair-line">${p.j2}</span>`;
-  let html=`<div class="phase-label" style="margin-top:.6rem;margin-bottom:6px;">Resultados — Grupo ${g.id}</div>
+  let html=`<div class="phase-label" style="margin-top:.6rem;margin-bottom:6px;">Resultados — ${groupLabel(g.id)}</div>
     <div class="grupo" style="border:none;margin-bottom:1.2rem;background:none;">
     <div class="matrix-wrap"><table class="matrix-table">
       <thead><tr><th class="corner">Parejas</th>${pairs.map(p=>`<th>${fullLabel(p)}</th>`).join('')}</tr></thead>
@@ -616,7 +633,7 @@ function renderPCard(m){
       ${sched.after&&disp.waitNames?`<div class="after-note">${disp.waitNames}</div>`:''}
     </div>`;
   }
-  const labelText=m.isPlayoff?m.grupoId:`Grupo ${m.grupoId}`;
+  const labelText=m.isPlayoff?m.grupoId:groupLabel(m.grupoId);
   return `<div class="partido">
     <div class="phdr"><span>${labelText}${stag}</span></div>
     <div class="pbody">
@@ -665,7 +682,7 @@ function renderJugadoraEntry(nombre,m){
       ${sched.after&&disp.waitNames?`<div class="after-note">${disp.waitNames}</div>`:''}
     </div>`;
   }
-  const labelText=m.isPlayoff?m.grupoId:`Grupo ${m.grupoId}`;
+  const labelText=m.isPlayoff?m.grupoId:groupLabel(m.grupoId);
   return `<div class="partido">
     <div class="phdr"><span>${labelText}</span></div>
     <div class="pbody">
@@ -960,9 +977,14 @@ function renderSectionPairs(cat){
   html+=`<div class="group-select-bar">`;
   grupos[cat].forEach(g=>{
     const active=state.adminPairsGroup[cat]===g.id;
-    html+=`<button class="group-select-btn ${active?'active':''}" onclick="selectPairsGroup('${cat}','${g.id}')">Grupo ${g.id}</button>`;
+    html+=`<button class="group-select-btn ${active?'active':''}" onclick="selectPairsGroup('${cat}','${g.id}')">${groupLabel(g.id)}</button>`;
   });
+  html+=`<button class="group-select-btn" style="border-color:#16a34a;color:#16a34a;" onclick="agregarGrupo('${cat}')">+ Grupo nuevo</button>`;
   html+=`</div>`;
+
+  if(!grupos[cat].length){
+    return html+'<div class="empty">Esta categoría no tiene grupos. Creá uno con "+ Grupo nuevo".</div>';
+  }
 
   const selectedG=grupos[cat].find(g=>g.id===state.adminPairsGroup[cat])||grupos[cat][0];
   const gi=grupos[cat].indexOf(selectedG);
@@ -970,13 +992,21 @@ function renderSectionPairs(cat){
   const allGroupOptions=[];
   ["1era","2da","3era"].forEach(c=>{
     grupos[c].forEach(g=>{
-      allGroupOptions.push({cat:c,gid:g.id,label:`${catLabel(c)} - Grupo ${g.id}`});
+      allGroupOptions.push({cat:c,gid:g.id,label:`${catLabel(c)} - ${groupLabel(g.id)}`});
     });
   });
 
   html+=`<div class="grupo" style="margin-bottom:1.2rem;">
-    <div class="grupo-header">Grupo ${selectedG.id} (${selectedG.parejas.length} parejas)</div>
-    <div style="padding:12px;">`;
+    <div class="grupo-header">${groupLabel(selectedG.id)} (${selectedG.parejas.length} parejas)</div>
+    <div style="padding:12px;">
+      <div style="background:#fafafa;border:1.5px solid #eee;border-radius:10px;padding:10px;margin-bottom:12px;">
+        <label style="margin-top:0;font-size:11px;">Nombre del grupo (dejalo vacío para usar "Grupo ${selectedG.id}")</label>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <input id="groupNameInput_${selectedG.id}" value="${(customGroupNames[selectedG.id]||'').replace(/"/g,'&quot;')}" placeholder="Grupo ${selectedG.id}" style="flex:1;min-width:140px;">
+          <button class="btn btn-pink btn-sm" onclick="guardarNombreGrupo('${cat}','${selectedG.id}')">Guardar nombre</button>
+          <button class="btn btn-red btn-sm" onclick="eliminarGrupo('${cat}','${selectedG.id}')">🗑 Eliminar grupo</button>
+        </div>
+      </div>`;
   selectedG.parejas.forEach((p,pi)=>{
     const moveOpts=allGroupOptions.map(o=>`<option value="${o.cat}|${o.gid}" ${o.cat===cat&&o.gid===selectedG.id?'selected':''}>${o.label}</option>`).join('');
     html+=`<div class="prow">
@@ -993,6 +1023,83 @@ function renderSectionPairs(cat){
   return html;
 }
 function selectPairsGroup(cat,gid){state.adminPairsGroup[cat]=gid;renderA();}
+
+// Genera un id de grupo único que no exista en NINGUNA categoría.
+// Empieza con el prefijo numérico de la categoría (1/2/3) + letra correlativa.
+function generarGrupoId(cat){
+  const prefijo=cat==='1era'?'1':cat==='2da'?'2':'3';
+  // Reunir todos los ids existentes en todas las categorías
+  const existentes=new Set();
+  ["1era","2da","3era"].forEach(c=>grupos[c].forEach(g=>existentes.add(g.id)));
+  // Probar 1A, 1B, ... 1Z, luego 1A1, 1A2... (por si se llenan las letras)
+  for(let i=0;i<26;i++){
+    const cand=`${prefijo}${String.fromCharCode(65+i)}`;
+    if(!existentes.has(cand))return cand;
+  }
+  // fallback: prefijo + número incremental
+  let n=1;
+  while(existentes.has(`${prefijo}G${n}`))n++;
+  return `${prefijo}G${n}`;
+}
+
+// Crea un grupo nuevo (vacío) en la categoría indicada
+async function agregarGrupo(cat){
+  const gid=generarGrupoId(cat);
+  const nuevoGrupo={id:gid,parejas:[]};
+  grupos[cat].push(nuevoGrupo);
+  grupos[cat].sort((a,b)=>a.id.localeCompare(b.id));
+  state.adminPairsGroup[cat]=gid;
+  // No hace falta insertar en Supabase todavía: el grupo "existe" cuando
+  // tiene al menos una pareja. Agregamos una pareja placeholder para que
+  // el grupo persista y se pueda empezar a editar.
+  const pid='p'+Date.now();
+  nuevoGrupo.parejas.push({id:pid,j1:'Jugadora 1',j2:'Jugadora 2'});
+  await supabaseClient.from('parejas').insert({
+    id:pid,categoria:cat,grupo_id:gid,jugadora1:'Jugadora 1',jugadora2:'Jugadora 2',cardales:false
+  });
+  renderA();showToast(`Grupo ${gid} creado`);
+}
+
+// Elimina un grupo entero: sus parejas, sus partidos y su nombre personalizado
+async function eliminarGrupo(cat,gid){
+  const g=grupos[cat].find(x=>x.id===gid);
+  if(!g)return;
+  const cantParejas=g.parejas.length;
+  const nombre=groupLabel(gid);
+  if(!confirm(`¿Eliminar "${nombre}" completo?\n\nSe van a borrar sus ${cantParejas} parejas y todos sus partidos. Esta acción no se puede deshacer.\n\n(Los otros grupos y el playoff no se tocan.)`)){
+    return;
+  }
+  // Borrar partidos del grupo
+  const pids=g.parejas.map(p=>p.id);
+  partidos=partidos.filter(m=>m.grupoId!==gid);
+  await supabaseClient.from('partidos').delete().eq('grupo_id',gid);
+  // Borrar parejas del grupo
+  if(pids.length){
+    await supabaseClient.from('parejas').delete().eq('grupo_id',gid);
+  }
+  // Sacar el grupo del estado
+  grupos[cat]=grupos[cat].filter(x=>x.id!==gid);
+  // Borrar nombre personalizado si tenía
+  if(customGroupNames[gid]){
+    delete customGroupNames[gid];
+    await supabaseClient.from('configuracion').upsert({clave:'group_names',valor:customGroupNames});
+  }
+  // Reposicionar la selección
+  state.adminPairsGroup[cat]=grupos[cat].length?grupos[cat][0].id:null;
+  renderA();renderJContent();showToast(`Grupo eliminado`);
+}
+
+// Guarda el nombre personalizado de un grupo
+async function guardarNombreGrupo(cat,gid){
+  const val=(document.getElementById(`groupNameInput_${gid}`)?.value||'').trim();
+  if(val){
+    customGroupNames[gid]=val;
+  }else{
+    delete customGroupNames[gid]; // vacío = volver al default "Grupo X"
+  }
+  await supabaseClient.from('configuracion').upsert({clave:'group_names',valor:customGroupNames});
+  renderA();renderJContent();showToast('Nombre del grupo guardado ✓');
+}
 
 // Guarda los nombres personalizados de las categorías en Supabase
 async function guardarNombresCategorias(){
@@ -1023,13 +1130,30 @@ async function editP(cat,gi,pi,f,v){
   showToast('Guardado');
 }
 async function delP(cat,gi,pi){
-  const pid=grupos[cat][gi].parejas[pi].id;
-  grupos[cat][gi].parejas.splice(pi,1);
+  const grupo=grupos[cat][gi];
+  // Si es la última pareja del grupo, avisar que el grupo va a quedar vacío
+  if(grupo.parejas.length===1){
+    if(!confirm(`Esta es la única pareja de "${groupLabel(grupo.id)}". Si la borrás, el grupo queda vacío y desaparece.\n\nSi querés eliminar el grupo entero usá el botón "🗑 Eliminar grupo". ¿Borrar igual?`)){
+      return;
+    }
+  }
+  const pid=grupo.parejas[pi].id;
+  grupo.parejas.splice(pi,1);
   partidos=partidos.filter(m=>m.p1!==pid&&m.p2!==pid);
   await supabaseClient.from('partidos').delete().or(`pareja1_id.eq.${pid},pareja2_id.eq.${pid}`);
   await supabaseClient.from('parejas').delete().eq('id',pid);
-  await regenerateMatchesForGroup(cat,grupos[cat][gi].id);
-  renderA();showToast('Eliminado');
+  // Si el grupo quedó vacío, sacarlo del estado y limpiar su nombre
+  if(grupo.parejas.length===0){
+    grupos[cat]=grupos[cat].filter(x=>x.id!==grupo.id);
+    if(customGroupNames[grupo.id]){
+      delete customGroupNames[grupo.id];
+      await supabaseClient.from('configuracion').upsert({clave:'group_names',valor:customGroupNames});
+    }
+    state.adminPairsGroup[cat]=grupos[cat].length?grupos[cat][0].id:null;
+  }else{
+    await regenerateMatchesForGroup(cat,grupo.id);
+  }
+  renderA();renderJContent();showToast('Eliminado');
 }
 async function addP(cat,gi){
   const id='p'+Date.now();
@@ -1059,7 +1183,7 @@ async function movePair(cat,gi,pi,target){
 
   state.adminPairsGroup[cat]=grupos[cat][gi].id;
   renderA();
-  showToast(`Pareja movida a ${catLabel(targetCat)} - Grupo ${targetGid}`);
+  showToast(`Pareja movida a ${catLabel(targetCat)} - ${groupLabel(targetGid)}`);
 }
 async function regenerateMatchesForGroup(cat,gid){
   const g=grupos[cat].find(x=>x.id===gid);
@@ -1113,14 +1237,14 @@ function renderSectionSched(){
   const allMatchOptions=allMatches.map(m=>{
     const label=m.isPlayoff
       ? `Cat. ${m.catLabel} — ${m.roundName}: ${m.p1?pJ1(m.p1):'?'} vs ${m.p2?pJ1(m.p2):'?'}`
-      : `Cat. ${m.catLabel} — Grupo ${m.grupoId}: ${pJ1(m.p1)} vs ${pJ1(m.p2)}`;
+      : `Cat. ${m.catLabel} — ${groupLabel(m.grupoId)}: ${pJ1(m.p1)} vs ${pJ1(m.p2)}`;
     return{id:m.id,label};
   });
 
   html+=`<div class="sched-grid">`;
   allMatches.forEach(m=>{
     const sched=getSched(m.id);
-    const label=m.isPlayoff?`Cat. ${m.catLabel} — ${m.roundName}`:`Cat. ${m.catLabel} — Grupo ${m.grupoId}`;
+    const label=m.isPlayoff?`Cat. ${m.catLabel} — ${m.roundName}`:`Cat. ${m.catLabel} — ${groupLabel(m.grupoId)}`;
     const n1=m.p1?(pJ1(m.p1)+' / '+pJ2(m.p1)):'Por definir';
     const n2=m.p2?(pJ1(m.p2)+' / '+pJ2(m.p2)):'Por definir';
     const otherOpts=allMatchOptions
@@ -1263,7 +1387,7 @@ function renderSectionResults(cat){
 function renderResInput(m){
   const n1=pJ1(m.p1)+' / '+pJ2(m.p1),n2=pJ1(m.p2)+' / '+pJ2(m.p2);
   return `<div class="sched-card">
-    <div class="sched-card-hdr">Grupo ${m.grupoId}</div>
+    <div class="sched-card-hdr">${groupLabel(m.grupoId)}</div>
     <div class="sched-card-body">
       <div class="sched-card-vs"><strong>${n1}</strong><br><span style="color:var(--gray-light);">vs</span><br><strong>${n2}</strong></div>
       <div class="sched-mini-row" style="margin-bottom:8px;">
@@ -1279,7 +1403,7 @@ function renderResDone(m){
   let w1=0,w2=0;m.sets.forEach(s=>{if(s[0]>s[1])w1++;else w2++;});
   const stag=m.simulated?` <span class="sim-badge">simulado</span>`:'';
   return `<div class="sched-card">
-    <div class="sched-card-hdr">Grupo ${m.grupoId}${stag}</div>
+    <div class="sched-card-hdr">${groupLabel(m.grupoId)}${stag}</div>
     <div class="sched-card-body">
       <div class="sched-card-vs" style="margin-bottom:6px;"><strong style="color:${w1>w2?'var(--pink)':'inherit'}">${n1}</strong><br><span style="color:var(--gray-light);">vs</span><br><strong style="color:${w2>w1?'var(--pink)':'inherit'}">${n2}</strong></div>
       <div style="text-align:center;font-size:13px;font-weight:500;color:var(--pink);margin-bottom:8px;">${m.sets.map(s=>s[0]+'-'+s[1]).join(' ')}</div>
@@ -1355,7 +1479,7 @@ function renderSectionPlayoff(cat){
   html+=`<div class="grupo"><div class="table-scroll"><table class="grupo-table"><thead><tr><th>#</th><th class="thl">Pareja</th><th>Grupo</th><th>Vía</th></tr></thead><tbody>`;
   [...qualFirsts,...qualSeconds].forEach((s,i)=>{
     const shade=i%2===1;
-    html+=`<tr class="${shade?'shade':''}"><td><span class="pos-badge ${i<qualFirsts.length?'pos-1':'pos-2'}">${i+1}</span></td><td class="tdl"><div class="pnames"><span>${s.j1}</span><span>${s.j2}</span></div></td><td>${s.grupoId}</td><td>${i<qualFirsts.length?'1°':'Mejor 2°'}</td></tr>`;
+    html+=`<tr class="${shade?'shade':''}"><td><span class="pos-badge ${i<qualFirsts.length?'pos-1':'pos-2'}">${i+1}</span></td><td class="tdl"><div class="pnames"><span>${s.j1}</span><span>${s.j2}</span></div></td><td>${groupLabelShort(s.grupoId)}</td><td>${i<qualFirsts.length?'1°':'Mejor 2°'}</td></tr>`;
   });
   html+=`</tbody></table></div></div>`;
 
@@ -1691,7 +1815,7 @@ function descargarParejasXLSX(){
   ["1era","2da","3era"].forEach(cat=>{
     grupos[cat].forEach(g=>{
       g.parejas.forEach(p=>{
-        rows.push([catLabels[cat],`Grupo ${g.id}`,p.j1,p.j2]);
+        rows.push([catLabels[cat],groupLabel(g.id),p.j1,p.j2]);
       });
     });
   });
@@ -1766,20 +1890,20 @@ function recolectarDatosTorneo(){
     grupos[cat].forEach(g=>{
       // Parejas
       g.parejas.forEach(p=>{
-        out.parejas.push([catLabels[cat],`Grupo ${g.id}`,p.j1,p.j2]);
+        out.parejas.push([catLabels[cat],groupLabel(g.id),p.j1,p.j2]);
       });
       // Posiciones (tabla ordenada)
       const stats=getStats(g.id,cat);
       stats.forEach((p,i)=>{
         out.posiciones[cat].push({
-          grupo:`Grupo ${g.id}`,pos:i+1,pareja:`${p.j1} / ${p.j2}`,
+          grupo:groupLabel(g.id),pos:i+1,pareja:`${p.j1} / ${p.j2}`,
           pts:p.pts,pj:p.gw+p.l,g:p.gw,pp:p.l,gg:p.gg,gp:p.gp,dif:(p.bal>0?'+':'')+p.bal
         });
       });
       // Resultados de partidos jugados
       partidos.filter(m=>m.grupoId===g.id&&m.played).forEach(m=>{
         const score=m.sets.map(s=>`${s[0]}-${s[1]}`).join(' ');
-        out.resultados.push([catLabels[cat],`Grupo ${g.id}`,pNombre(m.p1),pNombre(m.p2),score,m.simulated?'Simulado':'Jugado']);
+        out.resultados.push([catLabels[cat],groupLabel(g.id),pNombre(m.p1),pNombre(m.p2),score,m.simulated?'Simulado':'Jugado']);
       });
     });
     // Playoff
