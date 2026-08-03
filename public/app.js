@@ -63,6 +63,121 @@ function groupLabelShort(gid){
   return custom?custom:gid;
 }
 
+// ---- CONFIGURACIÓN DE CLASIFICACIÓN (por posición, por categoría) ----
+// Para cada categoría, un objeto {1:valor, 2:valor, 3:valor, ...} donde la clave
+// es la posición en el grupo y el valor es cuántos de esa posición clasifican:
+//   - un número N: los N mejores de esa posición (comparando entre todos los grupos)
+//   - "todos": todos los de esa posición clasifican
+//   - 0 o ausente: ninguno de esa posición
+// Default: 1ro de cada grupo clasifica directo ("todos"), 2do compite (4 mejores).
+const CLASIF_DEFAULT={"1era":{1:"todos"},"2da":{1:"todos",2:4},"3era":{1:"todos",2:2}};
+let clasificacionConfig=JSON.parse(JSON.stringify(CLASIF_DEFAULT));
+
+// Devuelve la config de clasificación de una categoría (o un default seguro)
+function getClasifCat(cat){
+  return clasificacionConfig[cat]||{1:"todos"};
+}
+
+// La cantidad máxima de posiciones que puede tener un grupo en esta categoría
+// (= tamaño del grupo más grande). Sirve para saber cuántas filas mostrar.
+function maxPosEnCategoria(cat){
+  let max=0;
+  grupos[cat].forEach(g=>{if(g.parejas.length>max)max=g.parejas.length;});
+  return max;
+}
+
+// Calcula los clasificados de una categoría según su config por posición.
+// Devuelve un array de objetos pareja, cada uno con:
+//   .grupoId, .posEnGrupo (1,2,3...), .viaLabel ("1°", "Mejor 2°", etc), .directo (bool)
+function getQualified(cat){
+  const cfg=getClasifCat(cat);
+  // 1. Para cada grupo, obtener su tabla ordenada
+  const tablasPorGrupo={};
+  grupos[cat].forEach(g=>{ tablasPorGrupo[g.id]=getStats(g.id,cat); });
+
+  const clasificados=[];
+  const maxPos=maxPosEnCategoria(cat);
+
+  for(let pos=1;pos<=maxPos;pos++){
+    const valor=cfg[pos];
+    if(valor===undefined||valor===0||valor==='0')continue; // esta posición no clasifica
+
+    // Reunir todas las parejas que ocupan ESTA posición en sus grupos
+    let enEstaPos=[];
+    grupos[cat].forEach(g=>{
+      const tabla=tablasPorGrupo[g.id];
+      const p=tabla[pos-1];
+      if(p){
+        // Para posiciones > 1 en grupos de 5, ajustar stats (excluir último) para
+        // comparar en igualdad de partidos jugados (misma lógica que getAdj)
+        const ajustada=pos>=2?getAdj(p,g.id,cat):p;
+        enEstaPos.push({...ajustada,grupoId:g.id,posEnGrupo:pos});
+      }
+    });
+
+    // Ordenar los de esta posición entre sí (mejor primero)
+    enEstaPos.sort((a,b)=>b.pts-a.pts||b.bal-a.bal||b.gg-a.gg);
+
+    // ¿Cuántos entran?
+    const cuantos=(valor==='todos')?enEstaPos.length:Math.min(parseInt(valor)||0,enEstaPos.length);
+    const seleccionados=enEstaPos.slice(0,cuantos);
+
+    // Etiqueta de vía de clasificación
+    const ordinal=pos+'°';
+    seleccionados.forEach((p,idx)=>{
+      let viaLabel;
+      if(valor==='todos'){
+        viaLabel=ordinal; // "1°", "2°" — todos los de esa posición
+      }else{
+        viaLabel=`Mejor ${ordinal}`; // comodín: "Mejor 2°"
+      }
+      clasificados.push({...p,viaLabel,directo:valor==='todos'});
+    });
+  }
+  return clasificados;
+}
+
+// Total de clasificados de una categoría (para saber el tamaño del cuadro)
+function totalClasificados(cat){ return getQualified(cat).length; }
+
+// Genera un texto legible que describe cómo clasifica una categoría
+function descripcionClasificacion(cat){
+  const cfg=getClasifCat(cat);
+  const maxPos=maxPosEnCategoria(cat);
+  const ordinales={1:'1ros',2:'2dos',3:'3ros',4:'4tos',5:'5tos',6:'6tos',7:'7mos',8:'8vos'};
+  const partes=[];
+  for(let pos=1;pos<=maxPos;pos++){
+    const v=cfg[pos];
+    if(v===undefined||v===0||v==='0')continue;
+    const nombrePos=ordinales[pos]||`${pos}°`;
+    if(v==='todos'){
+      partes.push(`todos los <strong>${nombrePos}</strong> de cada grupo`);
+    }else{
+      const n=parseInt(v)||0;
+      if(n===1)partes.push(`el <strong>mejor ${pos}°</strong> de la categoría`);
+      else partes.push(`los <strong>${n} mejores ${nombrePos}</strong> de la categoría`);
+    }
+  }
+  if(!partes.length)return 'Todavía no hay posiciones configuradas para clasificar.';
+  // Unir con comas y "y" al final
+  let texto;
+  if(partes.length===1)texto=partes[0];
+  else texto=partes.slice(0,-1).join(', ')+' y '+partes[partes.length-1];
+  return `Clasifican ${texto}.`;
+}
+
+// Devuelve hasta qué posición clasifica DIRECTO (posiciones con "todos") en un grupo.
+// Sirve para dibujar la línea de corte en la tabla del grupo.
+function corteDirectoEnGrupo(cat){
+  const cfg=getClasifCat(cat);
+  let ultimaDirecta=0;
+  const maxPos=maxPosEnCategoria(cat);
+  for(let pos=1;pos<=maxPos;pos++){
+    if(cfg[pos]==='todos')ultimaDirecta=pos;
+  }
+  return ultimaDirecta; // 0 = no hay corte directo
+}
+
 // ---- ESTADO GLOBAL (se llena leyendo de Supabase) ----
 let grupos={"1era":[],"2da":[],"3era":[]};
 let partidos=[];
@@ -211,6 +326,7 @@ async function loadAllData(){
     if(row.clave==='reglamento') reglamentoText=row.valor||'';
     if(row.clave==='cat_names') customCatNames={...CAT_NAMES_DEFAULT,...row.valor};
     if(row.clave==='group_names') customGroupNames={...row.valor};
+    if(row.clave==='clasif_config') clasificacionConfig={...JSON.parse(JSON.stringify(CLASIF_DEFAULT)),...row.valor};
   });
 
   ["1era","2da","3era"].forEach(c=>{
@@ -231,7 +347,6 @@ function getPlayoffConfig(cat){
   if(mode==='semis') return{total:4,roundName:'semis'};
   return{total:8,roundName:'cuartos'};
 }
-function getCutPos(){return 1;}
 
 function getStatsRaw(gId,cat){
   const g=grupos[cat].find(g=>g.id===gId);if(!g)return[];
@@ -288,18 +403,19 @@ function getAdj(p,gId,cat){
 }
 function getSeeds(cat){
   const cfg=getPlayoffConfig(cat);
-  const firsts=[],seconds=[];
-  grupos[cat].forEach(g=>{
-    const st=getStats(g.id,cat);
-    if(st[0])firsts.push({...st[0],rank:1,grupoId:g.id});
-    if(st[1])seconds.push({...getAdj(st[1],g.id,cat),rank:2,grupoId:g.id});
-  });
+  // Clasificados según la config por posición
+  const clasificados=getQualified(cat);
+  // "firsts" = los que entran directo (posición con "todos"), típicamente los 1ros.
+  // "seconds" = el resto (comodines / mejores 2dos, 3ros...).
+  const firsts=clasificados.filter(p=>p.directo);
+  const seconds=clasificados.filter(p=>!p.directo);
+  // Orden por rendimiento dentro de cada bloque
   firsts.sort((a,b)=>b.pts-a.pts||b.bal-a.bal||b.gg-a.gg);
   seconds.sort((a,b)=>b.pts-a.pts||b.bal-a.bal||b.gg-a.gg);
   const half=cfg.total/2;
   const qF=firsts.slice(0,half);
   const qS=seconds.slice(0,half);
-  return{firsts,seconds,qualFirsts:qF,qualSeconds:qS,cfg};
+  return{firsts,seconds,qualFirsts:qF,qualSeconds:qS,cfg,clasificados};
 }
 function getChampion(cat){
   const po=playoffData[cat];
@@ -473,7 +589,6 @@ function renderPublicView(cat,subTab,targetElId){
     return;
   }
 
-  const{firsts,seconds,qualSeconds,cfg}=getSeeds(cat);
   const champion=getChampion(cat);
 
   if(champion){
@@ -505,16 +620,19 @@ function renderPublicView(cat,subTab,targetElId){
   }
 
   html+=`<div class="phase-label" style="margin-top:${playoffData[cat]?'1.8rem':'0'};">Zona de grupos</div>`;
+  const corteDirecto=corteDirectoEnGrupo(cat); // hasta qué posición clasifica directo
+  const descClasif=descripcionClasificacion(cat);
   grupos[cat].forEach(g=>{
     const stats=getStats(g.id,cat);
-    const cut=getCutPos();
     html+=`<div class="grupo">
       <div class="grupo-header">${groupLabel(g.id)} · ${g.parejas.length} parejas</div>
       <div class="table-scroll"><table class="grupo-table">
         <thead><tr><th style="width:26px">#</th><th class="thl">Pareja</th><th>Pts</th><th>G</th><th>P</th><th>GG</th><th>GP</th><th>Dif</th></tr></thead>
         <tbody>`;
     stats.forEach((p,i)=>{
-      const shade=i%2===1,isCut=i===cut-1;
+      const shade=i%2===1;
+      // Línea de corte: después de la última posición que clasifica directo
+      const isCut=corteDirecto>0 && i===corteDirecto-1 && i<stats.length-1;
       html+=`<tr class="${shade?'shade':''} ${isCut?'cut-row':''}">
         <td><span class="pos-badge pos-${i+1}">${i+1}</span></td>
         <td class="tdl"><div class="pnames"><span>${p.j1}</span><span>${p.j2}</span></div></td>
@@ -523,40 +641,44 @@ function renderPublicView(cat,subTab,targetElId){
       </tr>`;
     });
     html+=`</tbody></table></div>`;
-    const note=`🎾 1ro clasifica directo. 2do compite por los mejores segundos para ${playoffMode[cat]}.`;
-    html+=`<div class="cnote">${note}</div>
+    html+=`<div class="cnote">🎾 ${descClasif}</div>
       <div class="legend-bar"><strong>Pts</strong>: puntos (3 x victoria) &nbsp;·&nbsp; <strong>G</strong>: ganados &nbsp;·&nbsp; <strong>P</strong>: perdidos &nbsp;·&nbsp; <strong>GG</strong>: games ganados &nbsp;·&nbsp; <strong>GP</strong>: games perdidos &nbsp;·&nbsp; <strong>Dif</strong>: diferencia de games (GG-GP)</div>
       ${tiebreakLegendHtml()}
     </div>`;
     html+=renderMatrixTable(g,cat);
   });
 
-  if(seconds.length&&cat!=="1era"){
-    const needed=cfg.total-firsts.length;
-    if(needed>0){
-      html+=`<div class="phase-label" style="margin-top:1.5rem;">Ranking mejores 2dos</div>`;
-      html+=`<div class="grupo"><div class="grupo-header">Ranking 2dos puestos</div>
+  // Ranking de comodines (posiciones que NO clasifican todas, sino "los mejores N")
+  const clasificados=getQualified(cat);
+  const comodines=clasificados.filter(p=>!p.directo);
+  if(comodines.length){
+    // Agrupar comodines por posición para mostrarlos claros
+    const porPos={};
+    comodines.forEach(c=>{ (porPos[c.posEnGrupo]=porPos[c.posEnGrupo]||[]).push(c); });
+    const ordinales={2:'2dos',3:'3ros',4:'4tos',5:'5tos',6:'6tos',7:'7mos'};
+    Object.keys(porPos).sort((a,b)=>a-b).forEach(pos=>{
+      const lista=porPos[pos];
+      const nombrePos=ordinales[pos]||`${pos}°`;
+      html+=`<div class="phase-label" style="margin-top:1.5rem;">Ranking mejores ${nombrePos}</div>`;
+      html+=`<div class="grupo"><div class="grupo-header">Mejores ${nombrePos} que clasifican</div>
         <div class="table-scroll"><table class="grupo-table">
           <thead><tr><th>#</th><th class="thl">Pareja</th><th>Grupo</th><th>Pts</th><th>GG</th><th>GP</th><th>Dif</th></tr></thead><tbody>`;
-      seconds.forEach((s,i)=>{
-        const shade=i%2===1,cl=i<needed,isCut=i===needed-1&&needed<seconds.length;
-        html+=`<tr class="${shade?'shade':''} ${isCut?'cut-row':''}">
-          <td><span class="pos-badge ${cl?'pos-1':''}">${i+1}</span></td>
+      lista.forEach((s,i)=>{
+        const shade=i%2===1;
+        html+=`<tr class="${shade?'shade':''}">
+          <td><span class="pos-badge pos-1">${i+1}</span></td>
           <td class="tdl"><div class="pnames"><span>${s.j1}</span><span>${s.j2}</span></div></td>
           <td>${groupLabelShort(s.grupoId)}</td><td>${s.pts}</td><td>${s.gg}</td><td>${s.gp}</td><td>${s.bal>0?'+':''}${s.bal}</td>
         </tr>`;
       });
       html+=`</tbody></table></div>
-        <div class="cnote">Todos los segundos clasifican si el número de grupos lo permite. En grupos de 4, las stats se comparan directo.</div>
+        <div class="cnote">Estas parejas clasificaron como mejores ${nombrePos} comparando entre todos los grupos de la categoría.</div>
         <div class="legend-bar">
-          <strong>Cómo se rompe el empate entre segundos:</strong><br>
-          1° criterio: más <strong>Pts</strong> (puntos obtenidos en su grupo).<br>
-          2° criterio (si persiste el empate en puntos): mejor <strong>Dif</strong> (diferencia de games ganados menos perdidos).<br>
-          3° criterio (si persiste el empate en balance): más <strong>GG</strong> (total de games ganados).<br>
-          En grupos de 5 parejas, las estadísticas del 2do se calculan excluyendo el partido contra la última pareja del grupo, para comparar en igualdad de partidos jugados con los segundos de grupos de 4.
+          <strong>Cómo se ordenan:</strong> 1° por <strong>Pts</strong>, 2° por <strong>Dif</strong> de games, 3° por <strong>GG</strong>.<br>
+          En grupos de 5 parejas, las stats de posiciones 2° en adelante se calculan excluyendo el partido contra la última pareja del grupo, para comparar en igualdad de partidos jugados.
         </div>
       </div>`;
-    }
+    });
   }
 
   el.innerHTML=html||'<div class="empty">No hay datos.</div>';
@@ -771,6 +893,7 @@ function renderA(){
     <button class="pill-sm ${state.adminSection==='playoff'?'active':''}" onclick="switchAdminSection('playoff')">Playoff</button>
     <button class="pill-sm ${state.adminSection==='tiebreak'?'active':''}" onclick="switchAdminSection('tiebreak')">Desempate</button>
     <button class="pill-sm ${state.adminSection==='reglamento'?'active':''}" onclick="switchAdminSection('reglamento')">Reglamento</button>
+    <button class="pill-sm ${state.adminSection==='ajustes'?'active':''}" onclick="switchAdminSection('ajustes')">⚙️ Ajustes</button>
     <button class="pill-sm ${state.adminSection==='export'?'active':''}" onclick="switchAdminSection('export')">Exportar</button>
   `;
   renderAContent();
@@ -804,6 +927,7 @@ function renderAContent(){
   else if(state.adminSection==='playoff') html=renderSectionPlayoff(cat);
   else if(state.adminSection==='tiebreak') html=renderSectionTiebreak();
   else if(state.adminSection==='reglamento') html=renderSectionReglamento();
+  else if(state.adminSection==='ajustes') html=renderSectionAjustes();
   else if(state.adminSection==='export') html=renderSectionExport();
   document.getElementById('acontent').innerHTML=html;
 }
@@ -939,34 +1063,7 @@ function renderReglamentoHtml(text){
 }
 
 function renderSectionPairs(cat){
-  if(!grupos[cat]||!grupos[cat].length){
-    return '<div class="empty">Todavía no hay parejas cargadas en esta categoría.</div>';
-  }
-  let html=`<div class="grupo" style="margin-bottom:1.2rem;">
-    <div class="grupo-header">✏️ Nombres de las categorías</div>
-    <div style="padding:12px;">
-      <div style="font-size:11px;color:var(--gray);margin-bottom:10px;">Personalizá cómo se muestra cada categoría en toda la app (ej: "1° Categoría", "Categoría A", "Damas A", etc). Esto no cambia los grupos ni los datos.</div>
-      <div style="display:flex;flex-direction:column;gap:8px;">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <span style="font-size:12px;color:var(--gray-light);min-width:70px;">Categoría 1:</span>
-          <input id="catName_1era" value="${catLabel('1era').replace(/"/g,'&quot;')}" placeholder="1° Categoría" style="flex:1;min-width:150px;">
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <span style="font-size:12px;color:var(--gray-light);min-width:70px;">Categoría 2:</span>
-          <input id="catName_2da" value="${catLabel('2da').replace(/"/g,'&quot;')}" placeholder="2° Categoría" style="flex:1;min-width:150px;">
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <span style="font-size:12px;color:var(--gray-light);min-width:70px;">Categoría 3:</span>
-          <input id="catName_3era" value="${catLabel('3era').replace(/"/g,'&quot;')}" placeholder="3° Categoría" style="flex:1;min-width:150px;">
-        </div>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
-        <button class="btn btn-pink btn-sm" onclick="guardarNombresCategorias()">Guardar nombres</button>
-        <button class="btn btn-out btn-sm" onclick="resetNombresCategorias()">Volver a los nombres por defecto</button>
-      </div>
-    </div>
-  </div>`;
-  html+=`<div class="ibar">Elegí un grupo para editar sus parejas. Podés cambiar nombres, agregar, quitar o mover una pareja a otro grupo (incluso de otra categoría).</div>`;
+  let html=`<div class="ibar">Elegí un grupo para editar sus parejas. Podés crear grupos nuevos, eliminarlos, editar los nombres de las jugadoras, agregar, quitar o mover una pareja a otro grupo (incluso de otra categoría). Los nombres de categorías/grupos y la clasificación se editan en <strong>⚙️ Ajustes</strong>.</div>`;
   html+=`<div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
     <button class="btn btn-blk btn-sm" onclick="descargarParejasXLSX()">⬇ Parejas actuales (.xlsx)</button>
     <button class="btn btn-out btn-sm" onclick="descargarPlantilla()">📋 Descargar plantilla</button>
@@ -999,13 +1096,8 @@ function renderSectionPairs(cat){
   html+=`<div class="grupo" style="margin-bottom:1.2rem;">
     <div class="grupo-header">${groupLabel(selectedG.id)} (${selectedG.parejas.length} parejas)</div>
     <div style="padding:12px;">
-      <div style="background:#fafafa;border:1.5px solid #eee;border-radius:10px;padding:10px;margin-bottom:12px;">
-        <label style="margin-top:0;font-size:11px;">Nombre del grupo (dejalo vacío para usar "Grupo ${selectedG.id}")</label>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-          <input id="groupNameInput_${selectedG.id}" value="${(customGroupNames[selectedG.id]||'').replace(/"/g,'&quot;')}" placeholder="Grupo ${selectedG.id}" style="flex:1;min-width:140px;">
-          <button class="btn btn-pink btn-sm" onclick="guardarNombreGrupo('${cat}','${selectedG.id}')">Guardar nombre</button>
-          <button class="btn btn-red btn-sm" onclick="eliminarGrupo('${cat}','${selectedG.id}')">🗑 Eliminar grupo</button>
-        </div>
+      <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
+        <button class="btn btn-red btn-sm" onclick="eliminarGrupo('${cat}','${selectedG.id}')">🗑 Eliminar este grupo</button>
       </div>`;
   selectedG.parejas.forEach((p,pi)=>{
     const moveOpts=allGroupOptions.map(o=>`<option value="${o.cat}|${o.gid}" ${o.cat===cat&&o.gid===selectedG.id?'selected':''}>${o.label}</option>`).join('');
@@ -1121,6 +1213,147 @@ async function resetNombresCategorias(){
   await supabaseClient.from('configuracion').upsert({clave:'cat_names',valor:customCatNames});
   renderA();
   showToast('Nombres restablecidos');
+}
+
+// ====================================================
+// AJUSTES (nombres de categorías, grupos y clasificación)
+// ====================================================
+function renderSectionAjustes(){
+  let html=`<div class="ibar">Configurá acá los nombres de las categorías y grupos, y cómo se define la clasificación al playoff de cada categoría.</div>`;
+
+  // ---- 1. NOMBRES DE CATEGORÍAS ----
+  html+=`<div class="grupo" style="margin-bottom:1.2rem;">
+    <div class="grupo-header">🏷️ Nombres de las categorías</div>
+    <div style="padding:12px;">
+      <div style="font-size:11px;color:var(--gray);margin-bottom:10px;">Cómo se muestra cada categoría en toda la app (ej: "1° Categoría", "Categoría A", "Damas A"). No cambia los datos.</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="font-size:12px;color:var(--gray-light);min-width:80px;">Categoría 1:</span>
+          <input id="catName_1era" value="${catLabel('1era').replace(/"/g,'&quot;')}" placeholder="1° Categoría" style="flex:1;min-width:150px;">
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="font-size:12px;color:var(--gray-light);min-width:80px;">Categoría 2:</span>
+          <input id="catName_2da" value="${catLabel('2da').replace(/"/g,'&quot;')}" placeholder="2° Categoría" style="flex:1;min-width:150px;">
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="font-size:12px;color:var(--gray-light);min-width:80px;">Categoría 3:</span>
+          <input id="catName_3era" value="${catLabel('3era').replace(/"/g,'&quot;')}" placeholder="3° Categoría" style="flex:1;min-width:150px;">
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+        <button class="btn btn-pink btn-sm" onclick="guardarNombresCategorias()">Guardar nombres</button>
+        <button class="btn btn-out btn-sm" onclick="resetNombresCategorias()">Volver a los nombres por defecto</button>
+      </div>
+    </div>
+  </div>`;
+
+  // ---- 2. NOMBRES DE GRUPOS ----
+  html+=`<div class="grupo" style="margin-bottom:1.2rem;">
+    <div class="grupo-header">📛 Nombres de los grupos</div>
+    <div style="padding:12px;">
+      <div style="font-size:11px;color:var(--gray);margin-bottom:10px;">Poné un nombre personalizado a cada grupo (ej: "Zona Norte"). Dejalo vacío para usar el nombre por defecto ("Grupo 1A").</div>`;
+  ["1era","2da","3era"].forEach(cat=>{
+    if(!grupos[cat].length)return;
+    html+=`<div style="font-size:12px;font-weight:600;color:var(--pink);margin:10px 0 6px;">${catLabel(cat)}</div>`;
+    grupos[cat].forEach(g=>{
+      html+=`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+        <span style="font-size:12px;color:var(--gray-light);min-width:70px;">Grupo ${g.id}:</span>
+        <input id="ajGroupName_${g.id}" value="${(customGroupNames[g.id]||'').replace(/"/g,'&quot;')}" placeholder="Grupo ${g.id}" style="flex:1;min-width:140px;">
+      </div>`;
+    });
+  });
+  html+=`<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+      <button class="btn btn-pink btn-sm" onclick="guardarTodosNombresGrupos()">Guardar nombres de grupos</button>
+      <button class="btn btn-out btn-sm" onclick="resetNombresGrupos()">Borrar todos los nombres personalizados</button>
+    </div>
+    </div>
+  </div>`;
+
+  // ---- 3. CLASIFICACIÓN POR CATEGORÍA ----
+  html+=`<div class="grupo" style="margin-bottom:1.2rem;">
+    <div class="grupo-header">🏆 Clasificación al playoff</div>
+    <div style="padding:12px;">
+      <div style="font-size:11px;color:var(--gray);margin-bottom:4px;">Para cada categoría, definí por cada posición del grupo cuántas parejas clasifican:</div>
+      <div style="font-size:11px;color:var(--gray-light);margin-bottom:12px;line-height:1.6;">
+        &bull; <strong>Todos</strong>: todos los de esa posición pasan (ej: todos los 1ros).<br>
+        &bull; <strong>Un número</strong>: los N mejores de esa posición entre todos los grupos (comodines).<br>
+        &bull; <strong>0 / Ninguno</strong>: esa posición no clasifica.
+      </div>`;
+
+  ["1era","2da","3era"].forEach(cat=>{
+    if(!grupos[cat].length)return;
+    const cfg=getClasifCat(cat);
+    const maxPos=maxPosEnCategoria(cat);
+    const totalClas=totalClasificados(cat);
+    html+=`<div style="background:#fafafa;border:1.5px solid #eee;border-radius:10px;padding:12px;margin-bottom:12px;">
+      <div style="font-size:13px;font-weight:600;color:var(--pink);margin-bottom:8px;">${catLabel(cat)} <span style="font-size:11px;font-weight:400;color:var(--gray-light);">— ${totalClas} clasificados en total</span></div>`;
+    for(let pos=1;pos<=maxPos;pos++){
+      const val=cfg[pos];
+      const valStr=(val===undefined)?'0':String(val);
+      const ordinales={1:'1ros',2:'2dos',3:'3ros',4:'4tos',5:'5tos',6:'6tos',7:'7mos'};
+      html+=`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+        <span style="font-size:12px;color:var(--gray);min-width:100px;">Posición ${pos} (${ordinales[pos]||pos+'°'}):</span>
+        <select id="clasif_${cat}_${pos}" onchange="onClasifSelectChange('${cat}',${pos})" style="width:auto;min-width:130px;">
+          <option value="0" ${valStr==='0'?'selected':''}>No clasifica</option>
+          <option value="todos" ${valStr==='todos'?'selected':''}>Todos</option>
+          <option value="1" ${valStr==='1'?'selected':''}>1 mejor</option>
+          <option value="2" ${valStr==='2'?'selected':''}>2 mejores</option>
+          <option value="3" ${valStr==='3'?'selected':''}>3 mejores</option>
+          <option value="4" ${valStr==='4'?'selected':''}>4 mejores</option>
+          <option value="5" ${valStr==='5'?'selected':''}>5 mejores</option>
+          <option value="6" ${valStr==='6'?'selected':''}>6 mejores</option>
+          <option value="8" ${valStr==='8'?'selected':''}>8 mejores</option>
+        </select>
+      </div>`;
+    }
+    html+=`<div style="font-size:11px;color:#831843;background:var(--pink-bg);border-radius:8px;padding:8px;margin-top:8px;">${descripcionClasificacion(cat)}</div>`;
+    html+=`</div>`;
+  });
+  html+=`<button class="btn btn-pink btn-sm" onclick="guardarClasificacion()">Guardar clasificación</button>
+    <button class="btn btn-out btn-sm" style="margin-left:8px;" onclick="resetClasificacion()">Volver a la config por defecto</button>
+    </div>
+  </div>`;
+
+  return html;
+}
+
+// Guarda todos los nombres de grupos de una vez
+async function guardarTodosNombresGrupos(){
+  ["1era","2da","3era"].forEach(cat=>{
+    grupos[cat].forEach(g=>{
+      const val=(document.getElementById(`ajGroupName_${g.id}`)?.value||'').trim();
+      if(val)customGroupNames[g.id]=val;
+      else delete customGroupNames[g.id];
+    });
+  });
+  await supabaseClient.from('configuracion').upsert({clave:'group_names',valor:customGroupNames});
+  renderA();renderJContent();showToast('Nombres de grupos guardados ✓');
+}
+async function resetNombresGrupos(){
+  if(!confirm('¿Borrar todos los nombres personalizados de grupos? Van a volver a "Grupo 1A", "Grupo 2B", etc.'))return;
+  customGroupNames={};
+  await supabaseClient.from('configuracion').upsert({clave:'group_names',valor:customGroupNames});
+  renderA();renderJContent();showToast('Nombres de grupos restablecidos');
+}
+
+// Cuando cambia un select de clasificación, actualiza la vista para reflejar
+// la nueva descripción y el total (sin guardar todavía).
+function onClasifSelectChange(cat,pos){
+  const val=document.getElementById(`clasif_${cat}_${pos}`)?.value;
+  if(val==='0'){ delete clasificacionConfig[cat][pos]; }
+  else{ if(!clasificacionConfig[cat])clasificacionConfig[cat]={}; clasificacionConfig[cat][pos]=(val==='todos')?'todos':parseInt(val); }
+  // Re-render solo la sección de ajustes para actualizar descripción y total
+  renderAContent();
+}
+async function guardarClasificacion(){
+  await supabaseClient.from('configuracion').upsert({clave:'clasif_config',valor:clasificacionConfig});
+  renderA();renderJContent();showToast('Clasificación guardada ✓');
+}
+async function resetClasificacion(){
+  if(!confirm('¿Volver a la configuración de clasificación por defecto?'))return;
+  clasificacionConfig=JSON.parse(JSON.stringify(CLASIF_DEFAULT));
+  await supabaseClient.from('configuracion').upsert({clave:'clasif_config',valor:clasificacionConfig});
+  renderA();renderJContent();showToast('Clasificación restablecida');
 }
 async function editP(cat,gi,pi,f,v){
   const pair=grupos[cat][gi].parejas[pi];
@@ -1471,20 +1704,27 @@ function renderSectionPlayoff(cat){
     <button class="toggle-btn ${mode==='semis'?'active':''}" onclick="setPlayoffMode('${cat}','semis')">Semifinales (4)</button>
   </div>`;
 
-  const{qualFirsts,qualSeconds,cfg}=getSeeds(cat);
+  const{cfg}=getSeeds(cat);
+  const clasificados=getQualified(cat);
   const po=playoffData[cat];
   const isPreview=!po||po.isPreview;
 
-  html+=`<div style="font-size:12px;font-weight:500;color:var(--pink);margin-bottom:8px;">Clasificados actuales (${qualFirsts.length+qualSeconds.length}/${cfg.total})</div>`;
-  html+=`<div class="grupo"><div class="table-scroll"><table class="grupo-table"><thead><tr><th>#</th><th class="thl">Pareja</th><th>Grupo</th><th>Vía</th></tr></thead><tbody>`;
-  [...qualFirsts,...qualSeconds].forEach((s,i)=>{
-    const shade=i%2===1;
-    html+=`<tr class="${shade?'shade':''}"><td><span class="pos-badge ${i<qualFirsts.length?'pos-1':'pos-2'}">${i+1}</span></td><td class="tdl"><div class="pnames"><span>${s.j1}</span><span>${s.j2}</span></div></td><td>${groupLabelShort(s.grupoId)}</td><td>${i<qualFirsts.length?'1°':'Mejor 2°'}</td></tr>`;
-  });
-  html+=`</tbody></table></div></div>`;
+  html+=`<div style="font-size:12px;font-weight:500;color:var(--pink);margin-bottom:4px;">Clasificados actuales según la config (${clasificados.length})</div>`;
+  html+=`<div style="font-size:11px;color:var(--gray-light);margin-bottom:8px;">${descripcionClasificacion(cat)} <a onclick="switchAdminSection('ajustes')" style="color:var(--pink);cursor:pointer;text-decoration:underline;">Cambiar en Ajustes</a></div>`;
+  if(!clasificados.length){
+    html+=`<div class="empty">Todavía no hay clasificados. Cargá resultados de grupos o configurá la clasificación en Ajustes.</div>`;
+  }else{
+    html+=`<div class="grupo"><div class="table-scroll"><table class="grupo-table"><thead><tr><th>#</th><th class="thl">Pareja</th><th>Grupo</th><th>Vía</th></tr></thead><tbody>`;
+    clasificados.forEach((s,i)=>{
+      const shade=i%2===1;
+      html+=`<tr class="${shade?'shade':''}"><td><span class="pos-badge ${s.directo?'pos-1':'pos-2'}">${i+1}</span></td><td class="tdl"><div class="pnames"><span>${s.j1}</span><span>${s.j2}</span></div></td><td>${groupLabelShort(s.grupoId)}</td><td>${s.viaLabel}</td></tr>`;
+    });
+    html+=`</tbody></table></div></div>`;
+  }
 
-  if(qualFirsts.length+qualSeconds.length<cfg.total){
-    html+=`<div class="ibar" style="margin-top:10px;">Todavía faltan resultados de grupos para completar los ${cfg.total} clasificados.</div>`;
+  // Aviso si el cuadro elegido (semis/cuartos) no coincide con la cantidad de clasificados
+  if(clasificados.length!==cfg.total){
+    html+=`<div class="ibar" style="margin-top:10px;background:#fffbeb;border-color:#fde047;color:#854d0e;">⚠️ La clasificación da <strong>${clasificados.length}</strong> parejas pero el cuadro de <strong>${cfg.roundName}</strong> necesita <strong>${cfg.total}</strong>. Ajustá la clasificación o el formato del cuadro para que coincidan.</div>`;
   }
 
   html+=`<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">
