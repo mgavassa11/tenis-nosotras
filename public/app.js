@@ -35,6 +35,18 @@ const GRUPOS_INICIALES = {
 const TB_LABELS={pts:'Puntos',bal:'Diferencia de games',gg:'Games ganados',h2h:'Enfrentamiento directo'};
 const CAT_LABELS={"1era":"1era","2da":"2da","3era":"3era"};
 
+// Nombres por defecto de las categorías (se pueden personalizar desde el admin)
+const CAT_NAMES_DEFAULT={"1era":"1° Categoría","2da":"2° Categoría","3era":"3° Categoría"};
+// Nombres personalizados (se cargan de Supabase). Empiezan como copia de los default.
+let customCatNames={...CAT_NAMES_DEFAULT};
+
+// Devuelve el nombre visible de una categoría (personalizado o default)
+function catLabel(cat){
+  return (customCatNames&&customCatNames[cat]&&customCatNames[cat].trim())
+    ? customCatNames[cat].trim()
+    : CAT_NAMES_DEFAULT[cat];
+}
+
 // ---- ESTADO GLOBAL (se llena leyendo de Supabase) ----
 let grupos={"1era":[],"2da":[],"3era":[]};
 let partidos=[];
@@ -181,6 +193,7 @@ async function loadAllData(){
     if(row.clave==='playoff_mode') playoffMode={...playoffMode,...row.valor};
     if(row.clave==='tiebreak_order') tiebreakOrder=row.valor;
     if(row.clave==='reglamento') reglamentoText=row.valor||'';
+    if(row.clave==='cat_names') customCatNames={...CAT_NAMES_DEFAULT,...row.valor};
   });
 
   ["1era","2da","3era"].forEach(c=>{
@@ -333,8 +346,7 @@ function checkPin(){
   }else{document.getElementById('pin-err').style.display='block';}
 }
 function buildCatTabs(elId,cur,fn){
-  const labels={"1era":"1º Categoría","2da":"2º Categoría","3era":"3º Categoría"};
-  document.getElementById(elId).innerHTML=["1era","2da","3era"].map(c=>`<button class="pill-sm ${c===cur?'active':''}" onclick="${fn}('${c}')">${labels[c]}</button>`).join('');
+  document.getElementById(elId).innerHTML=["1era","2da","3era"].map(c=>`<button class="pill-sm ${c===cur?'active':''}" onclick="${fn}('${c}')">${catLabel(c)}</button>`).join('');
 }
 function tiebreakLegendHtml(){
   const ol=tiebreakOrder.map(k=>`<li>${TB_LABELS[k]}</li>`).join('');
@@ -451,7 +463,7 @@ function renderPublicView(cat,subTab,targetElId){
     const p=getP(champion);
     html+=`<div class="champion-banner">
       <div class="crown">🏆</div>
-      <div class="title">Campeonas ${cat==='1era'?'1º Categoría':cat==='2da'?'2º Categoría':'3º Categoría'}</div>
+      <div class="title">Campeonas ${catLabel(cat)}</div>
       <div class="names">${p?p.j1:''}<br>${p?p.j2:''}</div>
     </div>`;
   }
@@ -758,8 +770,7 @@ function renderAContent(){
       <div id="liveContent"></div>`;
     document.getElementById('acontent').innerHTML=html;
     document.getElementById('liveCatBar').innerHTML=["1era","2da","3era"].map(c=>{
-      const labels={"1era":"1º Categoría","2da":"2º Categoría","3era":"3º Categoría"};
-      return `<button class="pill-sm ${c===state.liveCat?'active':''}" onclick="switchLiveCat('${c}')">${labels[c]}</button>`;
+      return `<button class="pill-sm ${c===state.liveCat?'active':''}" onclick="switchLiveCat('${c}')">${catLabel(c)}</button>`;
     }).join('');
     document.getElementById('liveSubBar').innerHTML=`
       <button class="pill-sm ${state.liveSubTab==='grupos'?'active':''}" onclick="switchLiveSub('grupos')">Grupos</button>
@@ -914,7 +925,31 @@ function renderSectionPairs(cat){
   if(!grupos[cat]||!grupos[cat].length){
     return '<div class="empty">Todavía no hay parejas cargadas en esta categoría.</div>';
   }
-  let html=`<div class="ibar">Elegí un grupo para editar sus parejas. Podés cambiar nombres, agregar, quitar o mover una pareja a otro grupo (incluso de otra categoría).</div>`;
+  let html=`<div class="grupo" style="margin-bottom:1.2rem;">
+    <div class="grupo-header">✏️ Nombres de las categorías</div>
+    <div style="padding:12px;">
+      <div style="font-size:11px;color:var(--gray);margin-bottom:10px;">Personalizá cómo se muestra cada categoría en toda la app (ej: "1° Categoría", "Categoría A", "Damas A", etc). Esto no cambia los grupos ni los datos.</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="font-size:12px;color:var(--gray-light);min-width:70px;">Categoría 1:</span>
+          <input id="catName_1era" value="${catLabel('1era').replace(/"/g,'&quot;')}" placeholder="1° Categoría" style="flex:1;min-width:150px;">
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="font-size:12px;color:var(--gray-light);min-width:70px;">Categoría 2:</span>
+          <input id="catName_2da" value="${catLabel('2da').replace(/"/g,'&quot;')}" placeholder="2° Categoría" style="flex:1;min-width:150px;">
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="font-size:12px;color:var(--gray-light);min-width:70px;">Categoría 3:</span>
+          <input id="catName_3era" value="${catLabel('3era').replace(/"/g,'&quot;')}" placeholder="3° Categoría" style="flex:1;min-width:150px;">
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+        <button class="btn btn-pink btn-sm" onclick="guardarNombresCategorias()">Guardar nombres</button>
+        <button class="btn btn-out btn-sm" onclick="resetNombresCategorias()">Volver a los nombres por defecto</button>
+      </div>
+    </div>
+  </div>`;
+  html+=`<div class="ibar">Elegí un grupo para editar sus parejas. Podés cambiar nombres, agregar, quitar o mover una pareja a otro grupo (incluso de otra categoría).</div>`;
   html+=`<div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
     <button class="btn btn-blk btn-sm" onclick="descargarParejasXLSX()">⬇ Parejas actuales (.xlsx)</button>
     <button class="btn btn-out btn-sm" onclick="descargarPlantilla()">📋 Descargar plantilla</button>
@@ -935,7 +970,7 @@ function renderSectionPairs(cat){
   const allGroupOptions=[];
   ["1era","2da","3era"].forEach(c=>{
     grupos[c].forEach(g=>{
-      allGroupOptions.push({cat:c,gid:g.id,label:`${c==='1era'?'1ra':c==='2da'?'2da':'3ra'} - Grupo ${g.id}`});
+      allGroupOptions.push({cat:c,gid:g.id,label:`${catLabel(c)} - Grupo ${g.id}`});
     });
   });
 
@@ -958,6 +993,28 @@ function renderSectionPairs(cat){
   return html;
 }
 function selectPairsGroup(cat,gid){state.adminPairsGroup[cat]=gid;renderA();}
+
+// Guarda los nombres personalizados de las categorías en Supabase
+async function guardarNombresCategorias(){
+  const n1=document.getElementById('catName_1era')?.value.trim()||'';
+  const n2=document.getElementById('catName_2da')?.value.trim()||'';
+  const n3=document.getElementById('catName_3era')?.value.trim()||'';
+  // Si un campo queda vacío, usamos el default para esa categoría
+  customCatNames={
+    "1era":n1||CAT_NAMES_DEFAULT["1era"],
+    "2da":n2||CAT_NAMES_DEFAULT["2da"],
+    "3era":n3||CAT_NAMES_DEFAULT["3era"]
+  };
+  await supabaseClient.from('configuracion').upsert({clave:'cat_names',valor:customCatNames});
+  renderA();
+  showToast('Nombres de categorías guardados ✓');
+}
+async function resetNombresCategorias(){
+  customCatNames={...CAT_NAMES_DEFAULT};
+  await supabaseClient.from('configuracion').upsert({clave:'cat_names',valor:customCatNames});
+  renderA();
+  showToast('Nombres restablecidos');
+}
 async function editP(cat,gi,pi,f,v){
   const pair=grupos[cat][gi].parejas[pi];
   pair[f]=v;
@@ -1002,7 +1059,7 @@ async function movePair(cat,gi,pi,target){
 
   state.adminPairsGroup[cat]=grupos[cat][gi].id;
   renderA();
-  showToast(`Pareja movida a ${targetCat==='1era'?'1ra':targetCat==='2da'?'2da':'3ra'} - Grupo ${targetGid}`);
+  showToast(`Pareja movida a ${catLabel(targetCat)} - Grupo ${targetGid}`);
 }
 async function regenerateMatchesForGroup(cat,gid){
   const g=grupos[cat].find(x=>x.id===gid);
@@ -1629,7 +1686,7 @@ async function importarParejas(inputEl){
 // Descarga las parejas actuales en formato Excel (.xlsx)
 function descargarParejasXLSX(){
   if(typeof XLSX==='undefined'){showToast('Error: librería Excel no cargada');return;}
-  const catLabels={"1era":"1° Categoría","2da":"2° Categoría","3era":"3° Categoría"};
+  const catLabels={"1era":catLabel("1era"),"2da":catLabel("2da"),"3era":catLabel("3era")};
   const rows=[["Categoría","Grupo","Jugadora 1","Jugadora 2"]];
   ["1era","2da","3era"].forEach(cat=>{
     grupos[cat].forEach(g=>{
@@ -1702,7 +1759,7 @@ function renderSectionExport(){
 
 // Recolecta toda la data del torneo en una estructura reutilizable para ambos formatos
 function recolectarDatosTorneo(){
-  const catLabels={"1era":"1° Categoría","2da":"2° Categoría","3era":"3° Categoría"};
+  const catLabels={"1era":catLabel("1era"),"2da":catLabel("2da"),"3era":catLabel("3era")};
   const out={parejas:[],posiciones:{},resultados:[],playoff:[]};
   ["1era","2da","3era"].forEach(cat=>{
     out.posiciones[cat]=[];
@@ -1743,7 +1800,7 @@ function recolectarDatosTorneo(){
 
 function exportarTorneoExcel(){
   if(typeof XLSX==='undefined'){showToast('Error: librería Excel no cargada');return;}
-  const catLabels={"1era":"1° Categoría","2da":"2° Categoría","3era":"3° Categoría"};
+  const catLabels={"1era":catLabel("1era"),"2da":catLabel("2da"),"3era":catLabel("3era")};
   const d=recolectarDatosTorneo();
   const wb=XLSX.utils.book_new();
 
@@ -1764,7 +1821,8 @@ function exportarTorneoExcel(){
     });
     const ws=XLSX.utils.aoa_to_sheet(rows);
     ws['!cols']=[{wch:12},{wch:5},{wch:30},{wch:6},{wch:5},{wch:5},{wch:5},{wch:6},{wch:6},{wch:6}];
-    const label=cat==='1era'?'Posiciones 1°':cat==='2da'?'Posiciones 2°':'Posiciones 3°';
+    let cn=catLabel(cat); if(cn.length>20)cn=cat==='1era'?'1°':cat==='2da'?'2°':'3°';
+    const label=`Posic ${cn}`.slice(0,31);
     XLSX.utils.book_append_sheet(wb,ws,label);
   });
 
@@ -1802,7 +1860,7 @@ function exportarTorneoExcel(){
 function exportarTorneoPDF(){
   const jsPDFRef=(window.jspdf&&window.jspdf.jsPDF)||window.jsPDF;
   if(!jsPDFRef){showToast('Error: librería PDF no cargada');return;}
-  const catLabels={"1era":"1° Categoría","2da":"2° Categoría","3era":"3° Categoría"};
+  const catLabels={"1era":catLabel("1era"),"2da":catLabel("2da"),"3era":catLabel("3era")};
   const d=recolectarDatosTorneo();
   const doc=new jsPDFRef({orientation:'portrait',unit:'mm',format:'a4'});
   const pink=[232,49,138];
