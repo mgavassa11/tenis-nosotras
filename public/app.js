@@ -2296,31 +2296,6 @@ async function setPlayoffMode(cat,mode){
   await supabaseClient.from('configuracion').upsert({clave:'playoff_mode',valor:playoffMode});
   renderA();
 }
-function buildFirstVsSecondPairing(firsts,seconds){
-  const usedSeconds=new Array(seconds.length).fill(false);
-  const pairs=[];
-  firsts.forEach(f=>{
-    let chosenIdx=-1;
-    for(let i=0;i<seconds.length;i++){
-      if(usedSeconds[i])continue;
-      if(seconds[i].grupoId===f.grupoId)continue;
-      chosenIdx=i;
-      break;
-    }
-    if(chosenIdx===-1){
-      for(let i=0;i<seconds.length;i++){
-        if(!usedSeconds[i]){chosenIdx=i;break;}
-      }
-    }
-    if(chosenIdx!==-1){
-      usedSeconds[chosenIdx]=true;
-      pairs.push({first:f,second:seconds[chosenIdx]});
-    }else{
-      pairs.push({first:f,second:null});
-    }
-  });
-  return pairs;
-}
 function seedPositionsForBracket(n){
   if(n===2) return [0,1];
   if(n===4) return [0,3,1,2];
@@ -2334,44 +2309,80 @@ function seedPositionsForBracket(n){
   }
   return arr.slice(0,n);
 }
+
+// Empareja a TODOS los clasificados en cruces por siembra estándar:
+// 1° vs último, 2° vs anteúltimo, etc. Evita, cuando puede, que dos parejas
+// del mismo grupo se crucen en la primera ronda (las intercambia con otro cruce).
+// Recibe la lista completa de clasificados ya ordenada por ranking (mejor primero).
+function armarCruces(clasificados,totalSlots){
+  // Rellenar con null si faltan (por si aún no hay suficientes clasificados)
+  const seeds=clasificados.slice(0,totalSlots);
+  while(seeds.length<totalSlots)seeds.push(null);
+
+  const nCruces=totalSlots/2;
+  // Emparejamiento por siembra: seed i (0-index) vs seed (totalSlots-1-i)
+  let cruces=[];
+  for(let i=0;i<nCruces;i++){
+    cruces.push({a:seeds[i],b:seeds[totalSlots-1-i]});
+  }
+
+  // Intento de evitar choques del mismo grupo en primera ronda:
+  // si a y b son del mismo grupo, buscar otro cruce con el que intercambiar
+  // el segundo (b) sin crear un nuevo choque.
+  const mismoGrupo=(x,y)=>x&&y&&x.grupoId&&y.grupoId&&x.grupoId===y.grupoId;
+  for(let i=0;i<cruces.length;i++){
+    if(mismoGrupo(cruces[i].a,cruces[i].b)){
+      for(let j=0;j<cruces.length;j++){
+        if(j===i)continue;
+        // probar intercambiar los "b"
+        const nuevoIB=cruces[j].b, nuevoJB=cruces[i].b;
+        if(!mismoGrupo(cruces[i].a,nuevoIB)&&!mismoGrupo(cruces[j].a,nuevoJB)){
+          [cruces[i].b,cruces[j].b]=[cruces[j].b,cruces[i].b];
+          break;
+        }
+      }
+    }
+  }
+  return cruces;
+}
+
 function buildRoundsForMode(cat,seedsData){
   const cfg=getPlayoffConfig(cat);
-  const{firsts,seconds}=seedsData;
-  const slotsNeeded=cfg.total/2;
-  const pairs=buildFirstVsSecondPairing(
-    firsts.slice(0,slotsNeeded),
-    seconds.slice(0,slotsNeeded)
-  );
-  const order=seedPositionsForBracket(slotsNeeded);
-  const orderedPairs=order.map(i=>pairs[i]||{first:null,second:null});
+  // Lista completa de clasificados ordenada por ranking (directos primero,
+  // luego comodines, cada bloque ya ordenado por rendimiento en getSeeds).
+  const clasificados=[...seedsData.firsts,...seedsData.seconds];
+
   if(cfg.total===2){
     // Final directa: los 2 mejores clasificados juegan la final.
-    // Tomamos el ranking completo (directos + comodines) por rendimiento,
-    // porque con 2 clasificados pueden ser dos 1ros o un 1ro + un 2do.
-    const todos=[...firsts,...seconds];
-    const p1=todos[0]?.id||null;
-    const p2=todos[1]?.id||null;
     return[
       {name:'Final',matches:[
-        {id:'f1',p1,p2,sets:[],winner:null}
+        {id:'f1',p1:clasificados[0]?.id||null,p2:clasificados[1]?.id||null,sets:[],winner:null}
       ]},
     ];
   }
+
+  // Armar los cruces de primera ronda con TODOS los clasificados
+  const cruces=armarCruces(clasificados,cfg.total);
+  // Reordenar los cruces según la posición en el bracket (para que el árbol
+  // visual quede bien balanceado: 1ro arriba, 2do abajo, etc.)
+  const orden=seedPositionsForBracket(cfg.total/2);
+  const crucesOrdenados=orden.map(i=>cruces[i]||{a:null,b:null});
+
   if(cfg.total===4){
     return[
       {name:'Semifinales',matches:[
-        {id:'sf1',p1:orderedPairs[0]?.first?.id||null,p2:orderedPairs[0]?.second?.id||null,sets:[],winner:null},
-        {id:'sf2',p1:orderedPairs[1]?.first?.id||null,p2:orderedPairs[1]?.second?.id||null,sets:[],winner:null},
+        {id:'sf1',p1:crucesOrdenados[0]?.a?.id||null,p2:crucesOrdenados[0]?.b?.id||null,sets:[],winner:null},
+        {id:'sf2',p1:crucesOrdenados[1]?.a?.id||null,p2:crucesOrdenados[1]?.b?.id||null,sets:[],winner:null},
       ]},
       {name:'Final',matches:[{id:'f1',p1:null,p2:null,sets:[],winner:null}]},
     ];
   }
   return[
     {name:'Cuartos de final',matches:[
-      {id:'qf1',p1:orderedPairs[0]?.first?.id||null,p2:orderedPairs[0]?.second?.id||null,sets:[],winner:null},
-      {id:'qf2',p1:orderedPairs[1]?.first?.id||null,p2:orderedPairs[1]?.second?.id||null,sets:[],winner:null},
-      {id:'qf3',p1:orderedPairs[2]?.first?.id||null,p2:orderedPairs[2]?.second?.id||null,sets:[],winner:null},
-      {id:'qf4',p1:orderedPairs[3]?.first?.id||null,p2:orderedPairs[3]?.second?.id||null,sets:[],winner:null},
+      {id:'qf1',p1:crucesOrdenados[0]?.a?.id||null,p2:crucesOrdenados[0]?.b?.id||null,sets:[],winner:null},
+      {id:'qf2',p1:crucesOrdenados[1]?.a?.id||null,p2:crucesOrdenados[1]?.b?.id||null,sets:[],winner:null},
+      {id:'qf3',p1:crucesOrdenados[2]?.a?.id||null,p2:crucesOrdenados[2]?.b?.id||null,sets:[],winner:null},
+      {id:'qf4',p1:crucesOrdenados[3]?.a?.id||null,p2:crucesOrdenados[3]?.b?.id||null,sets:[],winner:null},
     ]},
     {name:'Semifinales',matches:[
       {id:'sf1',p1:null,p2:null,sets:[],winner:null},
