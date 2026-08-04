@@ -392,6 +392,7 @@ function getStatsRaw(gId,cat){
     return{...p,pts,gw,l,gg,gp,bal:gg-gp,grupoId:gId,cat};
   });
 }
+// Resultado del enfrentamiento directo entre DOS parejas: +1 si ganó A, -1 si ganó B, 0 si no jugaron
 function h2hResult(pairAId,pairBId,gId){
   const m=partidos.find(mm=>mm.grupoId===gId&&mm.played&&((mm.p1===pairAId&&mm.p2===pairBId)||(mm.p1===pairBId&&mm.p2===pairAId)));
   if(!m)return 0;
@@ -401,21 +402,90 @@ function h2hResult(pairAId,pairBId,gId){
   const aWon=aIsP1?w1>w2:w2>w1;
   return aWon?1:-1;
 }
-function compareByTiebreak(a,b,gId){
-  for(const crit of tiebreakOrder){
-    if(crit==='pts'&&a.pts!==b.pts)return b.pts-a.pts;
-    if(crit==='bal'&&a.bal!==b.bal)return b.bal-a.bal;
-    if(crit==='gg'&&a.gg!==b.gg)return b.gg-a.gg;
-    if(crit==='h2h'){
-      const r=h2hResult(a.id,b.id,gId);
-      if(r!==0)return -r;
-    }
-  }
+
+// Cuenta cuántas victorias tiene una pareja SOLO contra las otras del grupo empatado.
+// Sirve para el desempate por enfrentamiento directo entre 3 o más parejas.
+function h2hWinsDentroDe(pairId,idsEmpatados,gId){
+  let wins=0;
+  idsEmpatados.forEach(otroId=>{
+    if(otroId===pairId)return;
+    if(h2hResult(pairId,otroId,gId)===1)wins++;
+  });
+  return wins;
+}
+
+// Compara dos parejas por un criterio puntual (sin h2h). Devuelve <0, 0 o >0.
+function compareCriterioSimple(a,b,crit){
+  if(crit==='pts')return b.pts-a.pts;
+  if(crit==='bal')return b.bal-a.bal;
+  if(crit==='gg')return b.gg-a.gg;
   return 0;
 }
+
+// Ordena un conjunto de parejas aplicando los criterios de desempate en orden,
+// manejando correctamente empates de 3 o más (reglamento estándar de tenis/pádel).
+// - Para h2h con 3+ empatados: se arma la mini-tabla de victorias entre ellas.
+//   Si alguna les ganó a todas (o perdió con todas), se separa; si es un triángulo
+//   (nadie ganó a todos), el h2h no resuelve y se pasa al siguiente criterio.
+// - Los demás criterios (pts, dif, games) se calculan con las stats del grupo completo.
+// - Al aplicar un criterio, si el grupo se parte en subgrupos, se vuelve a desempatar
+//   recursivamente dentro de cada subgrupo con los criterios restantes.
+function ordenarConDesempate(parejas,gId,criterios){
+  if(parejas.length<=1)return parejas.slice();
+  if(!criterios.length)return parejas.slice(); // sin más criterios, se dejan como están
+
+  const crit=criterios[0];
+  const resto=criterios.slice(1);
+
+  if(crit==='h2h'){
+    // Mini-tabla: victorias de cada pareja contra las otras del grupo empatado
+    const ids=parejas.map(p=>p.id);
+    const conWins=parejas.map(p=>({p,wins:h2hWinsDentroDe(p.id,ids,gId)}));
+    // Agrupar por cantidad de victorias
+    const distintos=new Set(conWins.map(x=>x.wins));
+    if(distintos.size===1){
+      // Todos tienen las mismas victorias (triángulo o no jugaron): h2h no resuelve,
+      // pasar al siguiente criterio con TODAS las parejas juntas
+      return ordenarConDesempate(parejas,gId,resto);
+    }
+    // Ordenar por victorias (más primero) y, dentro de cada nivel, seguir desempatando
+    conWins.sort((x,y)=>y.wins-x.wins);
+    const resultado=[];
+    let i=0;
+    while(i<conWins.length){
+      let j=i;
+      while(j<conWins.length&&conWins[j].wins===conWins[i].wins)j++;
+      const bloque=conWins.slice(i,j).map(x=>x.p);
+      // Dentro del bloque con mismas victorias h2h, seguir con los criterios restantes
+      resultado.push(...ordenarConDesempate(bloque,gId,resto));
+      i=j;
+    }
+    return resultado;
+  }
+
+  // Criterio simple (pts, bal, gg): ordenar y agrupar por valor igual
+  const ordenadas=parejas.slice().sort((a,b)=>compareCriterioSimple(a,b,crit));
+  const resultado=[];
+  let i=0;
+  while(i<ordenadas.length){
+    let j=i;
+    while(j<ordenadas.length&&compareCriterioSimple(ordenadas[i],ordenadas[j],crit)===0)j++;
+    const bloque=ordenadas.slice(i,j);
+    if(bloque.length>1&&resto.length){
+      // Sub-empate: seguir desempatando dentro del bloque con los criterios restantes
+      resultado.push(...ordenarConDesempate(bloque,gId,resto));
+    }else{
+      resultado.push(...bloque);
+    }
+    i=j;
+  }
+  return resultado;
+}
+
 function getStats(gId,cat){
   const raw=getStatsRaw(gId,cat);
-  return raw.sort((a,b)=>compareByTiebreak(a,b,gId));
+  // Aplicar el desempate completo (maneja empates de 2 y de 3+)
+  return ordenarConDesempate(raw,gId,tiebreakOrder);
 }
 function getAdj(p,gId,cat){
   const g=grupos[cat].find(g=>g.id===gId);
