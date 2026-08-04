@@ -228,7 +228,7 @@ const state={
   adminUnlocked:false,
   proximosFilter:"horario",
   proximosBuscarNombre:"",
-  mostrarExplicacion:false,
+  explicacionAbierta:{},
 };
 ["1era","2da","3era"].forEach(c=>{state.adminPairsGroup[c]=null;});
 
@@ -433,6 +433,15 @@ function compareCriterioSimple(a,b,crit){
 //   recursivamente dentro de cada subgrupo con los criterios restantes.
 function ordenarConDesempate(parejas,gId,criterios){
   if(parejas.length<=1)return parejas.slice();
+  // REGLA: cuando el empate queda entre exactamente 2 parejas, lo define
+  // el resultado del partido entre ellas (si se jugó), sin importar qué
+  // criterios quedaban en la lista.
+  if(parejas.length===2){
+    const r=h2hResult(parejas[0].id,parejas[1].id,gId);
+    if(r===1)return [parejas[0],parejas[1]];
+    if(r===-1)return [parejas[1],parejas[0]];
+    // si todavía no jugaron entre sí, se sigue con los criterios configurados
+  }
   if(!criterios.length)return parejas.slice(); // sin más criterios, se dejan como están
 
   const crit=criterios[0];
@@ -491,106 +500,6 @@ function getStats(gId,cat){
 
 // Genera una explicación legible (solo para admin) de cómo se resolvió el orden
 // de un grupo, detallando cada empate y qué criterio lo desempató.
-function explicarDesempate(gId,cat){
-  const stats=getStats(gId,cat); // orden final
-  const critNombre={pts:'Puntos',bal:'Diferencia de games',gg:'Games ganados',h2h:'Enfrentamiento directo'};
-  const pasos=[];
-
-  // Detectar bloques de parejas que estaban empatadas en PUNTOS (el empate visible)
-  let i=0;
-  while(i<stats.length){
-    let j=i;
-    while(j<stats.length&&stats[j].pts===stats[i].pts)j++;
-    const bloque=stats.slice(i,j);
-    if(bloque.length>1){
-      // Hay empate en puntos → explicar cómo se ordenó este bloque
-      pasos.push(explicarBloque(bloque,gId,cat));
-    }
-    i=j;
-  }
-
-  if(!pasos.length){
-    return `<div style="font-size:11px;color:var(--gray);padding:2px 0;">No hubo empates en puntos: el orden salió directo por puntos.</div>`;
-  }
-  return pasos.join('');
-}
-
-// Explica cómo se ordenó un bloque de parejas empatadas en puntos, siguiendo los
-// criterios de desempate en orden hasta separarlas.
-function explicarBloque(bloque,gId,cat){
-  const critNombre={pts:'Puntos',bal:'Diferencia de games',gg:'Games ganados',h2h:'Enfrentamiento directo'};
-  const nombres=bloque.map(p=>`${p.j1}`).join(', ');
-  let html=`<div style="background:#fff;border:1px solid #f3c8de;border-radius:8px;padding:8px 10px;margin-top:6px;font-size:11px;line-height:1.6;">`;
-  html+=`<div style="color:#831843;font-weight:600;margin-bottom:4px;">⚖️ Empate en ${bloque[0].pts} pts: ${nombres}</div>`;
-
-  // Recorremos los criterios (después de pts) y explicamos cada uno
-  const criterios=tiebreakOrder.filter(c=>c!=='pts');
-  let restantes=bloque.slice();
-  const yaOrdenados=[];
-
-  for(const crit of criterios){
-    if(restantes.length<=1)break;
-
-    if(crit==='h2h'){
-      const ids=restantes.map(p=>p.id);
-      const wins=restantes.map(p=>({p,w:h2hWinsDentroDe(p.id,ids,gId)}));
-      const valoresDistintos=new Set(wins.map(x=>x.w));
-      if(valoresDistintos.size===1){
-        html+=`<div style="color:var(--gray);">• <strong>${critNombre.h2h}</strong>: `;
-        if(restantes.length>2){
-          html+=`triángulo (cada una ganó ${wins[0].w} de los partidos entre ellas) → no resuelve, se pasa al siguiente criterio.</div>`;
-        }else{
-          html+=`no jugaron entre sí o empataron → se pasa al siguiente criterio.</div>`;
-        }
-      }else{
-        // Sí separa (total o parcialmente)
-        wins.sort((a,b)=>b.w-a.w);
-        const detalle=wins.map(x=>`${x.p.j1} (${x.w} victoria${x.w===1?'':'s'})`).join(', ');
-        html+=`<div style="color:#166534;">• <strong>${critNombre.h2h}</strong>: ${detalle}. `;
-        // ¿Separó completamente o quedan subempates?
-        const gruposW={};
-        wins.forEach(x=>{(gruposW[x.w]=gruposW[x.w]||[]).push(x.p);});
-        const subEmpates=Object.values(gruposW).filter(g=>g.length>1);
-        if(subEmpates.length===0){
-          html+=`Quedan ordenadas.</div>`;
-          restantes=wins.map(x=>x.p);
-          break;
-        }else{
-          html+=`Separa parcialmente; los que siguen empatados continúan con el próximo criterio.</div>`;
-          // Actualizar restantes al primer subempate (simplificación: explicamos el mayor)
-          restantes=subEmpates[0];
-        }
-      }
-    }else{
-      // Criterio simple (bal / gg)
-      const key=crit;
-      const valores=restantes.map(p=>({p,v:(key==='bal'?p.bal:key==='gg'?p.gg:p.pts)}));
-      const distintos=new Set(valores.map(x=>x.v));
-      if(distintos.size===1){
-        html+=`<div style="color:var(--gray);">• <strong>${critNombre[crit]}</strong>: todas iguales (${valores[0].v}) → se pasa al siguiente criterio.</div>`;
-      }else{
-        valores.sort((a,b)=>b.v-a.v);
-        const detalle=valores.map(x=>`${x.p.j1} (${x.v>0&&key==='bal'?'+':''}${x.v})`).join(' > ');
-        html+=`<div style="color:#166534;">• <strong>${critNombre[crit]}</strong>: ${detalle}. `;
-        const gruposV={};
-        valores.forEach(x=>{(gruposV[x.v]=gruposV[x.v]||[]).push(x.p);});
-        const subEmpates=Object.values(gruposV).filter(g=>g.length>1);
-        if(subEmpates.length===0){
-          html+=`Quedan ordenadas.</div>`;
-          restantes=valores.map(x=>x.p);
-          break;
-        }else{
-          html+=`Separa parcialmente; sigue el próximo criterio para las que quedan iguales.</div>`;
-          restantes=subEmpates[0];
-        }
-      }
-    }
-  }
-
-  html+=`</div>`;
-  return html;
-}
-
 // Genera una explicación paso a paso de por qué el grupo quedó ordenado así.
 // Devuelve un array de "pasos" con texto legible. Espeja la lógica de
 // ordenarConDesempate pero registrando cada decisión.
@@ -613,6 +522,17 @@ function explicarClasificacionGrupo(gId,cat){
   // Función recursiva que explica el ordenamiento de un bloque de parejas
   function explicar(parejas,criterios,nivel){
     if(parejas.length<=1)return;
+    // Regla de 2 parejas: define el partido entre ellas
+    if(parejas.length===2){
+      const r=h2hResult(parejas[0].id,parejas[1].id,gId);
+      if(r!==0){
+        const ganador=r===1?parejas[0]:parejas[1];
+        const perdedor=r===1?parejas[1]:parejas[0];
+        pasos.push({tipo:'resuelve',nivel,crit:'Enfrentamiento directo',
+          texto:`El empate queda entre 2 parejas: <strong>${nom(ganador)}</strong> termina por encima de ${nom(perdedor)} porque ganó el partido que jugaron entre sí.`});
+        return;
+      }
+    }
     if(!criterios.length){
       pasos.push({tipo:'empate',nivel,texto:`Quedan empatadas ${unir(parejas.map(nom))} y no hay más criterios de desempate. Se dejan en el orden actual.`});
       return;
@@ -802,7 +722,7 @@ function buildCatTabs(elId,cur,fn){
 }
 function tiebreakLegendHtml(){
   const ol=tiebreakOrder.map(k=>`<li>${TB_LABELS[k]}</li>`).join('');
-  return `<div class="tiebreak-bar"><strong>Orden de desempate en caso de igualdad:</strong><ol>${ol}</ol></div>`;
+  return `<div class="tiebreak-bar"><strong>Orden de desempate en caso de igualdad:</strong><ol>${ol}</ol><div style="margin-top:4px;">Si el empate queda entre 2 parejas, lo define el resultado del partido jugado entre ellas.</div></div>`;
 }
 
 // ====================================================
@@ -970,9 +890,10 @@ function renderPublicView(cat,subTab,targetElId){
     html+=renderMatrixTable(g,cat);
     // Explicación del desempate — SOLO visible en el panel Live del admin
     if(esVistaAdmin){
-      html+=`<div style="background:var(--pink-bg);border:1.5px solid var(--pink-light);border-radius:10px;padding:10px 12px;margin:-6px 0 1.2rem;">
-        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#831843;font-weight:600;margin-bottom:4px;">🔒 Detalle del desempate (solo admin)</div>
-        ${explicarDesempate(g.id,cat)}
+      const abierta=!!state.explicacionAbierta[g.id];
+      html+=`<div style="margin:-.4rem 0 1.2rem;">
+        <button class="btn btn-blk btn-sm btn-full" onclick="toggleExplicacionLive('${g.id}')">${abierta?'▲ Ocultar':'▼ Ver'} por qué la clasificación quedó así</button>
+        ${abierta?renderExplicacionGrupo(g.id,cat):''}
       </div>`;
     }
   });
@@ -1441,20 +1362,13 @@ function renderSectionPairs(cat){
   });
   html+=`<button class="btn btn-out btn-sm" style="margin-top:8px;" onclick="addP('${cat}',${gi})">+ Agregar pareja</button>
     </div></div>`;
-
-  // ---- EXPLICACIÓN DE LA CLASIFICACIÓN DEL GRUPO ----
-  html+=`<div style="margin-bottom:1.2rem;">
-    <button class="btn btn-blk btn-sm btn-full" onclick="toggleExplicacion()">
-      ${state.mostrarExplicacion?'▲ Ocultar':'▼ Ver'} por qué la clasificación quedó así
-    </button>`;
-  if(state.mostrarExplicacion){
-    html+=renderExplicacionGrupo(selectedG.id,cat);
-  }
-  html+=`</div>`;
-
   return html;
 }
-function toggleExplicacion(){state.mostrarExplicacion=!state.mostrarExplicacion;renderA();}
+
+function toggleExplicacionLive(gid){
+  state.explicacionAbierta[gid]=!state.explicacionAbierta[gid];
+  renderPublicView(state.liveCat,state.liveSubTab,'liveContent');
+}
 
 // Arma el HTML de la explicación paso a paso del desempate de un grupo
 function renderExplicacionGrupo(gId,cat){
