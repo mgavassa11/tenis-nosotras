@@ -228,6 +228,7 @@ const state={
   adminUnlocked:false,
   proximosFilter:"horario",
   proximosBuscarNombre:"",
+  mostrarExplicacion:false,
 };
 ["1era","2da","3era"].forEach(c=>{state.adminPairsGroup[c]=null;});
 
@@ -487,6 +488,223 @@ function getStats(gId,cat){
   // Aplicar el desempate completo (maneja empates de 2 y de 3+)
   return ordenarConDesempate(raw,gId,tiebreakOrder);
 }
+
+// Genera una explicación legible (solo para admin) de cómo se resolvió el orden
+// de un grupo, detallando cada empate y qué criterio lo desempató.
+function explicarDesempate(gId,cat){
+  const stats=getStats(gId,cat); // orden final
+  const critNombre={pts:'Puntos',bal:'Diferencia de games',gg:'Games ganados',h2h:'Enfrentamiento directo'};
+  const pasos=[];
+
+  // Detectar bloques de parejas que estaban empatadas en PUNTOS (el empate visible)
+  let i=0;
+  while(i<stats.length){
+    let j=i;
+    while(j<stats.length&&stats[j].pts===stats[i].pts)j++;
+    const bloque=stats.slice(i,j);
+    if(bloque.length>1){
+      // Hay empate en puntos → explicar cómo se ordenó este bloque
+      pasos.push(explicarBloque(bloque,gId,cat));
+    }
+    i=j;
+  }
+
+  if(!pasos.length){
+    return `<div style="font-size:11px;color:var(--gray);padding:2px 0;">No hubo empates en puntos: el orden salió directo por puntos.</div>`;
+  }
+  return pasos.join('');
+}
+
+// Explica cómo se ordenó un bloque de parejas empatadas en puntos, siguiendo los
+// criterios de desempate en orden hasta separarlas.
+function explicarBloque(bloque,gId,cat){
+  const critNombre={pts:'Puntos',bal:'Diferencia de games',gg:'Games ganados',h2h:'Enfrentamiento directo'};
+  const nombres=bloque.map(p=>`${p.j1}`).join(', ');
+  let html=`<div style="background:#fff;border:1px solid #f3c8de;border-radius:8px;padding:8px 10px;margin-top:6px;font-size:11px;line-height:1.6;">`;
+  html+=`<div style="color:#831843;font-weight:600;margin-bottom:4px;">⚖️ Empate en ${bloque[0].pts} pts: ${nombres}</div>`;
+
+  // Recorremos los criterios (después de pts) y explicamos cada uno
+  const criterios=tiebreakOrder.filter(c=>c!=='pts');
+  let restantes=bloque.slice();
+  const yaOrdenados=[];
+
+  for(const crit of criterios){
+    if(restantes.length<=1)break;
+
+    if(crit==='h2h'){
+      const ids=restantes.map(p=>p.id);
+      const wins=restantes.map(p=>({p,w:h2hWinsDentroDe(p.id,ids,gId)}));
+      const valoresDistintos=new Set(wins.map(x=>x.w));
+      if(valoresDistintos.size===1){
+        html+=`<div style="color:var(--gray);">• <strong>${critNombre.h2h}</strong>: `;
+        if(restantes.length>2){
+          html+=`triángulo (cada una ganó ${wins[0].w} de los partidos entre ellas) → no resuelve, se pasa al siguiente criterio.</div>`;
+        }else{
+          html+=`no jugaron entre sí o empataron → se pasa al siguiente criterio.</div>`;
+        }
+      }else{
+        // Sí separa (total o parcialmente)
+        wins.sort((a,b)=>b.w-a.w);
+        const detalle=wins.map(x=>`${x.p.j1} (${x.w} victoria${x.w===1?'':'s'})`).join(', ');
+        html+=`<div style="color:#166534;">• <strong>${critNombre.h2h}</strong>: ${detalle}. `;
+        // ¿Separó completamente o quedan subempates?
+        const gruposW={};
+        wins.forEach(x=>{(gruposW[x.w]=gruposW[x.w]||[]).push(x.p);});
+        const subEmpates=Object.values(gruposW).filter(g=>g.length>1);
+        if(subEmpates.length===0){
+          html+=`Quedan ordenadas.</div>`;
+          restantes=wins.map(x=>x.p);
+          break;
+        }else{
+          html+=`Separa parcialmente; los que siguen empatados continúan con el próximo criterio.</div>`;
+          // Actualizar restantes al primer subempate (simplificación: explicamos el mayor)
+          restantes=subEmpates[0];
+        }
+      }
+    }else{
+      // Criterio simple (bal / gg)
+      const key=crit;
+      const valores=restantes.map(p=>({p,v:(key==='bal'?p.bal:key==='gg'?p.gg:p.pts)}));
+      const distintos=new Set(valores.map(x=>x.v));
+      if(distintos.size===1){
+        html+=`<div style="color:var(--gray);">• <strong>${critNombre[crit]}</strong>: todas iguales (${valores[0].v}) → se pasa al siguiente criterio.</div>`;
+      }else{
+        valores.sort((a,b)=>b.v-a.v);
+        const detalle=valores.map(x=>`${x.p.j1} (${x.v>0&&key==='bal'?'+':''}${x.v})`).join(' > ');
+        html+=`<div style="color:#166534;">• <strong>${critNombre[crit]}</strong>: ${detalle}. `;
+        const gruposV={};
+        valores.forEach(x=>{(gruposV[x.v]=gruposV[x.v]||[]).push(x.p);});
+        const subEmpates=Object.values(gruposV).filter(g=>g.length>1);
+        if(subEmpates.length===0){
+          html+=`Quedan ordenadas.</div>`;
+          restantes=valores.map(x=>x.p);
+          break;
+        }else{
+          html+=`Separa parcialmente; sigue el próximo criterio para las que quedan iguales.</div>`;
+          restantes=subEmpates[0];
+        }
+      }
+    }
+  }
+
+  html+=`</div>`;
+  return html;
+}
+
+// Genera una explicación paso a paso de por qué el grupo quedó ordenado así.
+// Devuelve un array de "pasos" con texto legible. Espeja la lógica de
+// ordenarConDesempate pero registrando cada decisión.
+function explicarClasificacionGrupo(gId,cat){
+  const raw=getStatsRaw(gId,cat);
+  const nombreCrit={pts:'Puntos',bal:'Diferencia de games',gg:'Games ganados',h2h:'Enfrentamiento directo'};
+  const pasos=[];
+  const nom=p=>`${p.j1} / ${p.j2}`;
+  // Une nombres con comas y "y" antes del último (ej: "A, B y C")
+  const unir=arr=>arr.length<=1?arr.join(''):arr.slice(0,-1).join(', ')+' y '+arr[arr.length-1];
+
+  // ¿Se jugaron todos los partidos del grupo?
+  const g=grupos[cat].find(x=>x.id===gId);
+  const totalPartidos=g?g.parejas.length*(g.parejas.length-1)/2:0;
+  const jugados=partidos.filter(m=>m.grupoId===gId&&m.played).length;
+  if(jugados<totalPartidos){
+    pasos.push({tipo:'aviso',texto:`⚠️ Todavía faltan partidos por jugar en este grupo (${jugados} de ${totalPartidos}). El orden puede cambiar.`});
+  }
+
+  // Función recursiva que explica el ordenamiento de un bloque de parejas
+  function explicar(parejas,criterios,nivel){
+    if(parejas.length<=1)return;
+    if(!criterios.length){
+      pasos.push({tipo:'empate',nivel,texto:`Quedan empatadas ${unir(parejas.map(nom))} y no hay más criterios de desempate. Se dejan en el orden actual.`});
+      return;
+    }
+    const crit=criterios[0];
+    const resto=criterios.slice(1);
+
+    if(crit==='h2h'){
+      const ids=parejas.map(p=>p.id);
+      const conWins=parejas.map(p=>({p,wins:h2hWinsDentroDe(p.id,ids,gId)}));
+      const distintos=new Set(conWins.map(x=>x.wins));
+
+      if(parejas.length===2){
+        // Enfrentamiento directo simple entre 2
+        const r=h2hResult(parejas[0].id,parejas[1].id,gId);
+        if(r!==0){
+          const ganador=r===1?parejas[0]:parejas[1];
+          const perdedor=r===1?parejas[1]:parejas[0];
+          pasos.push({tipo:'resuelve',nivel,crit:'Enfrentamiento directo',
+            texto:`<strong>${nom(ganador)}</strong> queda por encima de ${nom(perdedor)} porque le ganó en el partido entre ellas.`});
+          return;
+        }else{
+          pasos.push({tipo:'salta',nivel,crit:'Enfrentamiento directo',
+            texto:`${unir(parejas.map(nom))} no jugaron entre sí (o no hay resultado). Se pasa al siguiente criterio.`});
+          explicar(parejas,resto,nivel);
+          return;
+        }
+      }
+
+      // 3 o más empatadas
+      if(distintos.size===1){
+        pasos.push({tipo:'salta',nivel,crit:'Enfrentamiento directo',
+          texto:`Entre ${unir(parejas.map(nom))} hay un empate circular (cada una ganó y perdió lo mismo dentro del grupo), así que el enfrentamiento directo no las separa. Se pasa al siguiente criterio.`});
+        explicar(parejas,resto,nivel);
+        return;
+      }
+      // Se separan por victorias internas
+      conWins.sort((x,y)=>y.wins-x.wins);
+      const detalle=conWins.map(x=>`${nom(x.p)} (${x.wins} ${x.wins===1?'victoria':'victorias'})`).join(', ');
+      pasos.push({tipo:'resuelve',nivel,crit:'Enfrentamiento directo',
+        texto:`Entre las ${parejas.length} empatadas se cuentan las victorias en los partidos entre ellas: ${detalle}. Se ordenan por esa cantidad.`});
+      let i=0;
+      while(i<conWins.length){
+        let j=i;
+        while(j<conWins.length&&conWins[j].wins===conWins[i].wins)j++;
+        const bloque=conWins.slice(i,j).map(x=>x.p);
+        if(bloque.length>1){
+          pasos.push({tipo:'subempate',nivel,texto:`${unir(bloque.map(nom))} siguen empatadas con ${conWins[i].wins} ${conWins[i].wins===1?'victoria':'victorias'} entre ellas. Se desempata con el siguiente criterio:`});
+          explicar(bloque,resto,nivel+1);
+        }
+        i=j;
+      }
+      return;
+    }
+
+    // Criterio simple
+    const ordenadas=parejas.slice().sort((a,b)=>compareCriterioSimple(a,b,crit));
+    const valorDe=p=>crit==='pts'?p.pts:crit==='bal'?(p.bal>0?'+':'')+p.bal:p.gg;
+    const detalle=ordenadas.map(p=>`${nom(p)} (${valorDe(p)})`).join(', ');
+    // ¿Este criterio separa a alguien?
+    let separaAlgo=false;
+    for(let k=0;k<ordenadas.length-1;k++){
+      if(compareCriterioSimple(ordenadas[k],ordenadas[k+1],crit)!==0){separaAlgo=true;break;}
+    }
+    if(separaAlgo){
+      pasos.push({tipo:'resuelve',nivel,crit:nombreCrit[crit],
+        texto:`Se comparan por <strong>${nombreCrit[crit]}</strong>: ${detalle}.`});
+    }else{
+      pasos.push({tipo:'salta',nivel,crit:nombreCrit[crit],
+        texto:`Todas tienen el mismo valor en <strong>${nombreCrit[crit]}</strong> (${detalle}). No se separan; se pasa al siguiente criterio.`});
+    }
+    let i=0;
+    while(i<ordenadas.length){
+      let j=i;
+      while(j<ordenadas.length&&compareCriterioSimple(ordenadas[i],ordenadas[j],crit)===0)j++;
+      const bloque=ordenadas.slice(i,j);
+      if(bloque.length>1&&resto.length){
+        if(separaAlgo){
+          pasos.push({tipo:'subempate',nivel,texto:`${unir(bloque.map(nom))} siguen empatadas en ${nombreCrit[crit]}. Se desempata con el siguiente criterio:`});
+        }
+        explicar(bloque,resto,nivel+1);
+      }
+      i=j;
+    }
+  }
+
+  // Primero, cómo se agrupan por puntos (el punto de partida)
+  const ordenFinal=ordenarConDesempate(raw,gId,tiebreakOrder);
+  explicar(raw,tiebreakOrder,0);
+
+  return{pasos,ordenFinal};
+}
 function getAdj(p,gId,cat){
   const g=grupos[cat].find(g=>g.id===gId);
   if(!g||g.parejas.length<=4)return p;
@@ -607,6 +825,9 @@ function renderJContent(){renderPublicView(state.cat,state.subTabJ,'jcontent');}
 function renderPublicView(cat,subTab,targetElId){
   const el=document.getElementById(targetElId);
   if(!el)return;
+  // Solo el panel Live del admin usa el contenedor 'liveContent'.
+  // Ahí mostramos explicaciones extra que las jugadoras no ven.
+  const esVistaAdmin=(targetElId==='liveContent');
   let html='';
 
   if(subTab==='reglamento'){
@@ -747,6 +968,13 @@ function renderPublicView(cat,subTab,targetElId){
       ${tiebreakLegendHtml()}
     </div>`;
     html+=renderMatrixTable(g,cat);
+    // Explicación del desempate — SOLO visible en el panel Live del admin
+    if(esVistaAdmin){
+      html+=`<div style="background:var(--pink-bg);border:1.5px solid var(--pink-light);border-radius:10px;padding:10px 12px;margin:-6px 0 1.2rem;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#831843;font-weight:600;margin-bottom:4px;">🔒 Detalle del desempate (solo admin)</div>
+        ${explicarDesempate(g.id,cat)}
+      </div>`;
+    }
   });
 
   // Ranking de comodines (posiciones que NO clasifican todas, sino "los mejores N")
@@ -1213,6 +1441,67 @@ function renderSectionPairs(cat){
   });
   html+=`<button class="btn btn-out btn-sm" style="margin-top:8px;" onclick="addP('${cat}',${gi})">+ Agregar pareja</button>
     </div></div>`;
+
+  // ---- EXPLICACIÓN DE LA CLASIFICACIÓN DEL GRUPO ----
+  html+=`<div style="margin-bottom:1.2rem;">
+    <button class="btn btn-blk btn-sm btn-full" onclick="toggleExplicacion()">
+      ${state.mostrarExplicacion?'▲ Ocultar':'▼ Ver'} por qué la clasificación quedó así
+    </button>`;
+  if(state.mostrarExplicacion){
+    html+=renderExplicacionGrupo(selectedG.id,cat);
+  }
+  html+=`</div>`;
+
+  return html;
+}
+function toggleExplicacion(){state.mostrarExplicacion=!state.mostrarExplicacion;renderA();}
+
+// Arma el HTML de la explicación paso a paso del desempate de un grupo
+function renderExplicacionGrupo(gId,cat){
+  const{pasos,ordenFinal}=explicarClasificacionGrupo(gId,cat);
+  const nombreCrit={pts:'Puntos',bal:'Diferencia de games',gg:'Games ganados',h2h:'Enfrentamiento directo'};
+
+  let html=`<div style="border:1.5px solid #ddd;border-top:none;border-radius:0 0 10px 10px;padding:14px;background:#fff;">`;
+
+  // Orden de criterios configurado
+  html+=`<div style="font-size:11px;color:var(--gray);margin-bottom:12px;background:#fafafa;border-radius:8px;padding:8px 10px;">
+    <strong>Orden de desempate configurado:</strong> ${tiebreakOrder.map((c,i)=>`${i+1}) ${nombreCrit[c]}`).join(' → ')}
+  </div>`;
+
+  // Resultado final
+  html+=`<div style="font-size:12px;font-weight:600;color:var(--pink);margin-bottom:6px;">Cómo quedó el grupo</div>`;
+  html+=`<div style="margin-bottom:14px;">`;
+  ordenFinal.forEach((p,i)=>{
+    html+=`<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;">
+      <span class="pos-badge pos-${i+1}" style="flex-shrink:0;">${i+1}</span>
+      <span style="flex:1;">${p.j1} / ${p.j2}</span>
+      <span style="font-size:11px;color:var(--gray-light);">Pts ${p.pts} · Dif ${p.bal>0?'+':''}${p.bal} · GG ${p.gg}</span>
+    </div>`;
+  });
+  html+=`</div>`;
+
+  // Pasos del razonamiento
+  html+=`<div style="font-size:12px;font-weight:600;color:var(--pink);margin-bottom:6px;">Paso a paso</div>`;
+  if(!pasos.length){
+    html+=`<div style="font-size:12px;color:var(--gray-light);">No hay empates: el orden sale directo por puntos.</div>`;
+  }else{
+    html+=`<div style="display:flex;flex-direction:column;gap:8px;">`;
+    pasos.forEach(s=>{
+      const margin=(s.nivel||0)*16;
+      let icon='',color='#555',bg='#fafafa',border='#eee';
+      if(s.tipo==='resuelve'){icon='✓';color='#166534';bg='#f0fdf4';border='#bbf7d0';}
+      else if(s.tipo==='salta'){icon='→';color='#854d0e';bg='#fffbeb';border='#fde047';}
+      else if(s.tipo==='subempate'){icon='⚖️';color='#831843';bg='var(--pink-bg)';border='#f3c8de';}
+      else if(s.tipo==='empate'){icon='=';color='#555';bg='#f3f4f6';border='#e5e7eb';}
+      else if(s.tipo==='aviso'){icon='';color='#854d0e';bg='#fffbeb';border='#fde047';}
+      html+=`<div style="margin-left:${margin}px;background:${bg};border:1px solid ${border};border-radius:8px;padding:8px 10px;font-size:12px;color:${color};line-height:1.5;">
+        ${icon?`<strong>${icon}</strong> `:''}${s.texto}
+      </div>`;
+    });
+    html+=`</div>`;
+  }
+
+  html+=`</div>`;
   return html;
 }
 function selectPairsGroup(cat,gid){state.adminPairsGroup[cat]=gid;renderA();}
