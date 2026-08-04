@@ -73,6 +73,30 @@ function groupLabelShort(gid){
 const CLASIF_DEFAULT={"1era":{1:"todos"},"2da":{1:"todos",2:4},"3era":{1:"todos",2:2}};
 let clasificacionConfig=JSON.parse(JSON.stringify(CLASIF_DEFAULT));
 
+// Lista de sponsors del torneo: [{nombre, logo, link}]
+// Se guarda en configuracion bajo la clave 'sponsors'.
+let sponsorsList=[];
+
+// Normaliza cualquier formato viejo de sponsors que pueda estar en la base:
+// - array de strings → [{nombre}]
+// - array de objetos con campos alternativos (name/img/imagen/url/href/web)
+function parseSponsors(raw){
+  if(!raw)return[];
+  let arr=raw;
+  if(typeof raw==='string'){
+    try{arr=JSON.parse(raw);}catch(e){return[];}
+  }
+  if(!Array.isArray(arr))return[];
+  return arr.map(s=>{
+    if(typeof s==='string')return{nombre:s,logo:'',link:''};
+    return{
+      nombre:s.nombre||s.name||s.titulo||'',
+      logo:s.logo||s.img||s.imagen||s.image||s.url_logo||'',
+      link:s.link||s.href||s.web||s.url||''
+    };
+  }).filter(s=>s.nombre||s.logo);
+}
+
 // Prioridades de sorteo: {parejaId: número}. Cuando dos parejas del ranking
 // cruzado quedan empatadas en TODO (Pts, Dif, GG y GP) y no jugaron entre sí,
 // el orden lo define un sorteo que el administrador carga manualmente.
@@ -395,6 +419,7 @@ async function loadAllData(){
     if(row.clave==='group_names') customGroupNames={...row.valor};
     if(row.clave==='clasif_config') clasificacionConfig={...JSON.parse(JSON.stringify(CLASIF_DEFAULT)),...row.valor};
     if(row.clave==='sorteo_prioridad') sorteoPrioridad={...row.valor};
+    if(row.clave==='sponsors') sponsorsList=parseSponsors(row.valor);
   });
 
   ["1era","2da","3era"].forEach(c=>{
@@ -983,7 +1008,28 @@ function renderPublicView(cat,subTab,targetElId){
     }
   }
 
+  html+=renderSponsorsStrip();
+
   el.innerHTML=html||'<div class="empty">No hay datos.</div>';
+}
+
+// Tira de sponsors que se muestra al final de la vista de grupos
+function renderSponsorsStrip(){
+  if(!sponsorsList.length)return'';
+  let html=`<div class="phase-label" style="margin-top:1.8rem;">Nuestros sponsors</div>
+    <div style="background:#fff;border:2px solid #111;border-radius:9px;padding:16px 14px;display:flex;flex-wrap:wrap;gap:16px;justify-content:center;align-items:center;margin-bottom:1.2rem;">`;
+  sponsorsList.forEach(s=>{
+    const inner=s.logo
+      ?`<img src="${s.logo}" alt="${s.nombre||'Sponsor'}" style="max-height:60px;max-width:140px;object-fit:contain;display:block;">${s.nombre?`<div style="font-size:10px;color:var(--gray);text-align:center;margin-top:4px;">${s.nombre}</div>`:''}`
+      :`<div style="font-size:14px;font-weight:600;color:#831843;padding:8px 14px;background:var(--pink-bg);border-radius:8px;">${s.nombre}</div>`;
+    if(s.link){
+      html+=`<a href="${s.link}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;">${inner}</a>`;
+    }else{
+      html+=`<div>${inner}</div>`;
+    }
+  });
+  html+=`</div>`;
+  return html;
 }
 
 function renderMatrixTable(g,cat){
@@ -1647,6 +1693,31 @@ function renderSectionAjustes(){
     </div>
   </div>`;
 
+  // ---- SPONSORS ----
+  html+=`<div class="grupo" style="margin-bottom:1.2rem;">
+    <div class="grupo-header">🤝 Sponsors del torneo</div>
+    <div style="padding:12px;">
+      <div style="font-size:11px;color:var(--gray);margin-bottom:10px;">Se muestran al final de la pestaña "Grupos" que ven las jugadoras. Cargá el nombre, la URL del logo (opcional, ej: link de Imgur) y un link opcional al sitio o Instagram del sponsor.</div>
+      <div id="sponsorsEditor">`;
+  sponsorsList.forEach((s,i)=>{
+    html+=`<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;padding:8px;background:#fafafa;border:1px solid #eee;border-radius:8px;">
+      <input id="spNombre_${i}" value="${(s.nombre||'').replace(/"/g,'&quot;')}" placeholder="Nombre" style="flex:1;min-width:110px;">
+      <input id="spLogo_${i}" value="${(s.logo||'').replace(/"/g,'&quot;')}" placeholder="URL del logo (opcional)" style="flex:2;min-width:150px;">
+      <input id="spLink_${i}" value="${(s.link||'').replace(/"/g,'&quot;')}" placeholder="Link (opcional)" style="flex:2;min-width:150px;">
+      <button class="btn btn-red btn-sm" onclick="eliminarSponsor(${i})">✕</button>
+    </div>`;
+  });
+  if(!sponsorsList.length){
+    html+=`<div style="font-size:12px;color:var(--gray-light);margin-bottom:8px;">Todavía no hay sponsors cargados.</div>`;
+  }
+  html+=`</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">
+        <button class="btn btn-out btn-sm" onclick="agregarSponsor()">+ Agregar sponsor</button>
+        <button class="btn btn-pink btn-sm" onclick="guardarSponsors()">Guardar sponsors</button>
+      </div>
+    </div>
+  </div>`;
+
   // ---- 3. CLASIFICACIÓN POR CATEGORÍA ----
   html+=`<div class="grupo" style="margin-bottom:1.2rem;">
     <div class="grupo-header">🏆 Clasificación al playoff</div>
@@ -1727,6 +1798,32 @@ async function guardarTodosNombresGrupos(){
   await supabaseClient.from('configuracion').upsert({clave:'group_names',valor:customGroupNames});
   renderA();renderJContent();showToast('Nombres de grupos guardados ✓');
 }
+// ---- SPONSORS: alta, baja y guardado ----
+function leerSponsorsDelForm(){
+  // Lee los inputs actuales del editor (para no perder lo tipeado al agregar/quitar filas)
+  return sponsorsList.map((s,i)=>({
+    nombre:(document.getElementById(`spNombre_${i}`)?.value||'').trim(),
+    logo:(document.getElementById(`spLogo_${i}`)?.value||'').trim(),
+    link:(document.getElementById(`spLink_${i}`)?.value||'').trim(),
+  }));
+}
+function agregarSponsor(){
+  sponsorsList=leerSponsorsDelForm();
+  sponsorsList.push({nombre:'',logo:'',link:''});
+  renderAContent();
+}
+function eliminarSponsor(i){
+  sponsorsList=leerSponsorsDelForm();
+  sponsorsList.splice(i,1);
+  renderAContent();
+}
+async function guardarSponsors(){
+  sponsorsList=leerSponsorsDelForm().filter(s=>s.nombre||s.logo);
+  await supabaseClient.from('configuracion').upsert({clave:'sponsors',valor:sponsorsList});
+  renderAContent();renderJContent();
+  showToast('Sponsors guardados ✓');
+}
+
 async function resetNombresGrupos(){
   if(!confirm('¿Borrar todos los nombres personalizados de grupos? Van a volver a "Grupo 1A", "Grupo 2B", etc.'))return;
   customGroupNames={};
