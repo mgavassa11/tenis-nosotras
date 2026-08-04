@@ -73,6 +73,12 @@ function groupLabelShort(gid){
 const CLASIF_DEFAULT={"1era":{1:"todos"},"2da":{1:"todos",2:4},"3era":{1:"todos",2:2}};
 let clasificacionConfig=JSON.parse(JSON.stringify(CLASIF_DEFAULT));
 
+// Prioridades de sorteo: {parejaId: número}. Cuando dos parejas del ranking
+// cruzado quedan empatadas en TODO (Pts, Dif, GG y GP) y no jugaron entre sí,
+// el orden lo define un sorteo que el administrador carga manualmente.
+// Menor número = mejor posición.
+let sorteoPrioridad={};
+
 // Devuelve la config de clasificación de una categoría (o un default seguro)
 function getClasifCat(cat){
   return clasificacionConfig[cat]||{1:"todos"};
@@ -91,6 +97,36 @@ function maxPosEnCategoria(cat){
 //   .grupoId, .posEnGrupo (1,2,3...), .viaLabel ("1°", "Mejor 2°", etc), .directo (bool)
 // True si la categoría tiene un solo grupo
 function esUnicoGrupo(cat){ return grupos[cat] && grupos[cat].length===1; }
+
+// Comparador del RANKING CRUZADO entre grupos (mejores 2dos, 3ros, etc):
+// 1° Puntos · 2° Diferencia de games · 3° Games ganados · 4° Games perdidos (menos = mejor)
+// 5° Si el empate es total: prioridad de sorteo cargada por el administrador.
+function compareRankingCruzado(a,b){
+  if(b.pts!==a.pts)return b.pts-a.pts;
+  if(b.bal!==a.bal)return b.bal-a.bal;
+  if(b.gg!==a.gg)return b.gg-a.gg;
+  if(a.gp!==b.gp)return a.gp-b.gp; // menos games perdidos primero
+  const pa=(sorteoPrioridad[a.id]!==undefined)?sorteoPrioridad[a.id]:9999;
+  const pb=(sorteoPrioridad[b.id]!==undefined)?sorteoPrioridad[b.id]:9999;
+  if(pa!==pb)return pa-pb;
+  return 0;
+}
+
+// Todas las parejas que ocupan la posición `pos` en su grupo, de todos los
+// grupos de la categoría, ordenadas por el ranking cruzado.
+function rankingPorPosicion(cat,pos){
+  const lista=[];
+  grupos[cat].forEach(g=>{
+    const tabla=getStats(g.id,cat);
+    const p=tabla[pos-1];
+    if(p){
+      const aj=pos>=2?getAdj(p,g.id,cat):p;
+      lista.push({...aj,grupoId:g.id,posEnGrupo:pos});
+    }
+  });
+  lista.sort(compareRankingCruzado);
+  return lista;
+}
 
 function getQualified(cat){
   const cfg=getClasifCat(cat);
@@ -132,8 +168,8 @@ function getQualified(cat){
       }
     });
 
-    // Ordenar los de esta posición entre sí (mejor primero)
-    enEstaPos.sort((a,b)=>b.pts-a.pts||b.bal-a.bal||b.gg-a.gg);
+    // Ordenar los de esta posición entre sí (ranking cruzado: pts, dif, gg, gp, sorteo)
+    enEstaPos.sort(compareRankingCruzado);
 
     // ¿Cuántos entran?
     const cuantos=(valor==='todos')?enEstaPos.length:Math.min(parseInt(valor)||0,enEstaPos.length);
@@ -358,6 +394,7 @@ async function loadAllData(){
     if(row.clave==='cat_names') customCatNames={...CAT_NAMES_DEFAULT,...row.valor};
     if(row.clave==='group_names') customGroupNames={...row.valor};
     if(row.clave==='clasif_config') clasificacionConfig={...JSON.parse(JSON.stringify(CLASIF_DEFAULT)),...row.valor};
+    if(row.clave==='sorteo_prioridad') sorteoPrioridad={...row.valor};
   });
 
   ["1era","2da","3era"].forEach(c=>{
@@ -649,8 +686,8 @@ function getSeeds(cat){
   const firsts=clasificados.filter(p=>p.directo);
   const seconds=clasificados.filter(p=>!p.directo);
   // Orden por rendimiento dentro de cada bloque
-  firsts.sort((a,b)=>b.pts-a.pts||b.bal-a.bal||b.gg-a.gg);
-  seconds.sort((a,b)=>b.pts-a.pts||b.bal-a.bal||b.gg-a.gg);
+  firsts.sort(compareRankingCruzado);
+  seconds.sort(compareRankingCruzado);
   const half=cfg.total/2;
   const qF=firsts.slice(0,half);
   const qS=seconds.slice(0,half);
@@ -898,37 +935,52 @@ function renderPublicView(cat,subTab,targetElId){
     }
   });
 
-  // Ranking de comodines (posiciones que NO clasifican todas, sino "los mejores N")
-  const clasificados=getQualified(cat);
-  const comodines=clasificados.filter(p=>!p.directo);
-  if(comodines.length){
-    // Agrupar comodines por posición para mostrarlos claros
-    const porPos={};
-    comodines.forEach(c=>{ (porPos[c.posEnGrupo]=porPos[c.posEnGrupo]||[]).push(c); });
+  // Ranking cruzado por posición: se muestran TODOS los de esa posición
+  // (2dos, 3ros, etc de cada grupo), con línea de corte en los que clasifican.
+  {
+    const cfgClasif=getClasifCat(cat);
+    const maxPosCat=maxPosEnCategoria(cat);
     const ordinales={2:'2dos',3:'3ros',4:'4tos',5:'5tos',6:'6tos',7:'7mos'};
-    Object.keys(porPos).sort((a,b)=>a-b).forEach(pos=>{
-      const lista=porPos[pos];
+    for(let pos=1;pos<=maxPosCat;pos++){
+      const v=cfgClasif[pos];
+      if(v===undefined||v===0||v==='0'||v==='todos')continue; // solo posiciones con "mejores N"
+      const cuantos=parseInt(v)||0;
+      const lista=rankingPorPosicion(cat,pos);
+      if(!lista.length)continue;
       const nombrePos=ordinales[pos]||`${pos}°`;
+      const eqAll=(x,y)=>x&&y&&x.pts===y.pts&&x.bal===y.bal&&x.gg===y.gg&&x.gp===y.gp;
       html+=`<div class="phase-label" style="margin-top:1.5rem;">Ranking mejores ${nombrePos}</div>`;
-      html+=`<div class="grupo"><div class="grupo-header">Mejores ${nombrePos} que clasifican</div>
+      html+=`<div class="grupo"><div class="grupo-header">Ranking de ${nombrePos} — ${cuantos===1?'clasifica la mejor':'clasifican las '+cuantos+' mejores'}</div>
         <div class="table-scroll"><table class="grupo-table">
-          <thead><tr><th>#</th><th class="thl">Pareja</th><th>Grupo</th><th>Pts</th><th>GG</th><th>GP</th><th>Dif</th></tr></thead><tbody>`;
+          <thead><tr><th>#</th><th class="thl">Pareja</th><th>Grupo</th><th>Pts</th><th>Dif</th><th>GG</th><th>GP</th>${esVistaAdmin?'<th></th>':''}</tr></thead><tbody>`;
       lista.forEach((s,i)=>{
         const shade=i%2===1;
-        html+=`<tr class="${shade?'shade':''}">
-          <td><span class="pos-badge pos-1">${i+1}</span></td>
+        const clasifica=i<cuantos;
+        const isCut=i===cuantos-1&&cuantos<lista.length;
+        const tiedPrev=eqAll(s,lista[i-1]),tiedNext=eqAll(s,lista[i+1]);
+        let arrows='';
+        if(esVistaAdmin&&(tiedPrev||tiedNext)){
+          arrows=`<div style="display:flex;gap:3px;justify-content:center;">
+            <button class="tb-arrow-btn" style="width:24px;height:24px;font-size:12px;" ${tiedPrev?'':'disabled'} onclick="sorteoSwap('${cat}',${pos},${i},-1)">↑</button>
+            <button class="tb-arrow-btn" style="width:24px;height:24px;font-size:12px;" ${tiedNext?'':'disabled'} onclick="sorteoSwap('${cat}',${pos},${i},1)">↓</button>
+          </div>`;
+        }
+        html+=`<tr class="${shade?'shade':''} ${isCut?'cut-row':''}">
+          <td><span class="pos-badge ${clasifica?'pos-1':''}">${i+1}</span></td>
           <td class="tdl"><div class="pnames"><span>${s.j1}</span><span>${s.j2}</span></div></td>
-          <td>${groupLabelShort(s.grupoId)}</td><td>${s.pts}</td><td>${s.gg}</td><td>${s.gp}</td><td>${s.bal>0?'+':''}${s.bal}</td>
+          <td>${groupLabelShort(s.grupoId)}</td><td>${s.pts}</td><td>${s.bal>0?'+':''}${s.bal}</td><td>${s.gg}</td><td>${s.gp}</td>
+          ${esVistaAdmin?`<td>${arrows}</td>`:''}
         </tr>`;
       });
       html+=`</tbody></table></div>
-        <div class="cnote">Estas parejas clasificaron como mejores ${nombrePos} comparando entre todos los grupos de la categoría.</div>
+        <div class="cnote">Se muestran todos los ${nombrePos} de cada grupo. ${cuantos===1?'Clasifica la mejor':'Clasifican las '+cuantos+' mejores'} (arriba de la línea punteada).</div>
         <div class="legend-bar">
-          <strong>Cómo se ordenan:</strong> 1° por <strong>Pts</strong>, 2° por <strong>Dif</strong> de games, 3° por <strong>GG</strong>.<br>
+          <strong>Cómo se ordenan:</strong> 1° <strong>Pts</strong> · 2° <strong>Dif</strong> de games · 3° <strong>GG</strong> (games ganados) · 4° <strong>GP</strong> (menos games perdidos).<br>
+          Si persiste el empate total (no jugaron entre sí), se define por <strong>sorteo</strong> a cargo de la organización.${esVistaAdmin?'<br><strong>⚖️ Admin: usá las flechas ↑↓ (aparecen solo entre parejas empatadas en todo) para cargar el resultado del sorteo.</strong>':''}<br>
           En grupos de 5 parejas, las stats de posiciones 2° en adelante se calculan excluyendo el partido contra la última pareja del grupo, para comparar en igualdad de partidos jugados.
         </div>
       </div>`;
-    });
+    }
   }
 
   el.innerHTML=html||'<div class="empty">No hay datos.</div>';
@@ -1368,6 +1420,28 @@ function renderSectionPairs(cat){
 function toggleExplicacionLive(gid){
   state.explicacionAbierta[gid]=!state.explicacionAbierta[gid];
   renderPublicView(state.liveCat,state.liveSubTab,'liveContent');
+}
+
+// Sorteo: el admin intercambia dos parejas EMPATADAS EN TODO en el ranking
+// cruzado. dir=-1 sube, dir=1 baja. Guarda las prioridades resultantes.
+async function sorteoSwap(cat,pos,i,dir){
+  const lista=rankingPorPosicion(cat,pos);
+  const j=i+dir;
+  if(j<0||j>=lista.length)return;
+  const a=lista[i],b=lista[j];
+  // Solo permitido entre parejas empatadas en los 4 criterios
+  if(a.pts!==b.pts||a.bal!==b.bal||a.gg!==b.gg||a.gp!==b.gp){
+    showToast('Solo se puede reordenar entre parejas empatadas en todo');
+    return;
+  }
+  // Intercambiar y registrar el nuevo orden completo como prioridades de sorteo.
+  // Las prioridades solo pesan cuando el empate es total, así que asignarlas a
+  // toda la lista no afecta a las que ya están separadas por stats.
+  [lista[i],lista[j]]=[lista[j],lista[i]];
+  lista.forEach((p,idx)=>{sorteoPrioridad[p.id]=idx;});
+  await supabaseClient.from('configuracion').upsert({clave:'sorteo_prioridad',valor:sorteoPrioridad});
+  renderPublicView(state.liveCat,state.liveSubTab,'liveContent');
+  showToast('Resultado del sorteo guardado ✓');
 }
 
 // Arma el HTML de la explicación paso a paso del desempate de un grupo
