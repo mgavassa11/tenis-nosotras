@@ -749,6 +749,7 @@ function renderMainTabs(){
     <div id="view-jugadoras" style="display:${state.mainView==='jugadoras'?'block':'none'};">
       <div class="pillbar-sm" id="ctj"></div>
       <div class="pillbar-sm" id="stj"></div>
+      <div id="sponsorsBar"></div>
       <div class="content-pad" id="jcontent"></div>
     </div>
     <div id="view-admin" style="display:${state.mainView==='admin'?'block':'none'};">
@@ -798,6 +799,8 @@ function renderJ(){
     <button class="pill-sm ${state.subTabJ==='reglamento'?'active':''}" onclick="switchSubJ('reglamento')">Reglamento</button>
     <button class="pill-sm ${state.subTabJ==='direcciones'?'active':''}" onclick="switchSubJ('direcciones')">Direcciones</button>
   `;
+  const sb=document.getElementById('sponsorsBar');
+  if(sb)sb.innerHTML=renderSponsorsStrip();
   renderJContent();
 }
 function switchCatJ(cat){state.cat=cat;renderJ();}
@@ -1008,27 +1011,26 @@ function renderPublicView(cat,subTab,targetElId){
     }
   }
 
-  html+=renderSponsorsStrip();
-
   el.innerHTML=html||'<div class="empty">No hay datos.</div>';
 }
 
-// Tira de sponsors que se muestra al final de la vista de grupos
+// Tira de sponsors que se muestra entre las pestañas y el contenido,
+// visible en todas las pestañas de la vista de jugadoras.
 function renderSponsorsStrip(){
-  if(!sponsorsList.length)return'';
-  let html=`<div class="phase-label" style="margin-top:1.8rem;">Nuestros sponsors</div>
-    <div style="background:#fff;border:2px solid #111;border-radius:9px;padding:16px 14px;display:flex;flex-wrap:wrap;gap:16px;justify-content:center;align-items:center;margin-bottom:1.2rem;">`;
-  sponsorsList.forEach(s=>{
-    const inner=s.logo
-      ?`<img src="${s.logo}" alt="${s.nombre||'Sponsor'}" style="max-height:60px;max-width:140px;object-fit:contain;display:block;">${s.nombre?`<div style="font-size:10px;color:var(--gray);text-align:center;margin-top:4px;">${s.nombre}</div>`:''}`
-      :`<div style="font-size:14px;font-weight:600;color:#831843;padding:8px 14px;background:var(--pink-bg);border-radius:8px;">${s.nombre}</div>`;
+  // Mostrar solo sponsors que tengan imagen cargada
+  const conImagen=sponsorsList.filter(s=>s.logo);
+  if(!conImagen.length)return'';
+  let html=`<div style="padding:0 12px;margin-bottom:14px;">
+    <div style="background:#fff;border:1.5px solid #eee;border-radius:12px;padding:12px 14px;display:flex;flex-wrap:wrap;gap:14px;justify-content:center;align-items:center;box-shadow:0 1px 3px rgba(0,0,0,.05);">`;
+  conImagen.forEach(s=>{
+    const img=`<img src="${s.logo}" alt="${s.nombre||'Sponsor'}" style="max-height:56px;max-width:130px;object-fit:contain;display:block;">`;
     if(s.link){
-      html+=`<a href="${s.link}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;">${inner}</a>`;
+      html+=`<a href="${s.link}" target="_blank" rel="noopener noreferrer" style="display:inline-flex;">${img}</a>`;
     }else{
-      html+=`<div>${inner}</div>`;
+      html+=`<div style="display:inline-flex;">${img}</div>`;
     }
   });
-  html+=`</div>`;
+  html+=`</div></div>`;
   return html;
 }
 
@@ -1697,14 +1699,25 @@ function renderSectionAjustes(){
   html+=`<div class="grupo" style="margin-bottom:1.2rem;">
     <div class="grupo-header">🤝 Sponsors del torneo</div>
     <div style="padding:12px;">
-      <div style="font-size:11px;color:var(--gray);margin-bottom:10px;">Se muestran al final de la pestaña "Grupos" que ven las jugadoras. Cargá el nombre, la URL del logo (opcional, ej: link de Imgur) y un link opcional al sitio o Instagram del sponsor.</div>
+      <div style="font-size:11px;color:var(--gray);margin-bottom:10px;">Subí la imagen del logo de cada sponsor desde tu dispositivo. Aparecen entre las pestañas y los grupos, en todas las pantallas que ven las jugadoras. El nombre y el link son opcionales (el link hace que el logo sea clickeable).</div>
       <div id="sponsorsEditor">`;
   sponsorsList.forEach((s,i)=>{
-    html+=`<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;padding:8px;background:#fafafa;border:1px solid #eee;border-radius:8px;">
-      <input id="spNombre_${i}" value="${(s.nombre||'').replace(/"/g,'&quot;')}" placeholder="Nombre" style="flex:1;min-width:110px;">
-      <input id="spLogo_${i}" value="${(s.logo||'').replace(/"/g,'&quot;')}" placeholder="URL del logo (opcional)" style="flex:2;min-width:150px;">
-      <input id="spLink_${i}" value="${(s.link||'').replace(/"/g,'&quot;')}" placeholder="Link (opcional)" style="flex:2;min-width:150px;">
-      <button class="btn btn-red btn-sm" onclick="eliminarSponsor(${i})">✕</button>
+    const preview=s.logo
+      ?`<img src="${s.logo}" alt="logo" style="max-height:50px;max-width:90px;object-fit:contain;border:1px solid #eee;border-radius:6px;background:#fff;padding:2px;">`
+      :`<div style="width:90px;height:50px;border:1.5px dashed #ccc;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--gray-light);text-align:center;">Sin imagen</div>`;
+    html+=`<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;padding:8px;background:#fafafa;border:1px solid #eee;border-radius:8px;">
+      ${preview}
+      <div style="flex:1;min-width:180px;display:flex;flex-direction:column;gap:6px;">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <input id="spNombre_${i}" value="${(s.nombre||'').replace(/"/g,'&quot;')}" placeholder="Nombre (opcional)" style="flex:1;min-width:120px;">
+          <input id="spLink_${i}" value="${(s.link||'').replace(/"/g,'&quot;')}" placeholder="Link (opcional)" style="flex:1;min-width:120px;">
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-out btn-sm" onclick="document.getElementById('spFile_${i}').click()">${s.logo?'Cambiar imagen':'Subir imagen'}</button>
+          <input type="file" id="spFile_${i}" accept="image/*" style="display:none;" onchange="subirImagenSponsor(${i},this)">
+          <button class="btn btn-red btn-sm" onclick="eliminarSponsor(${i})">Quitar sponsor</button>
+        </div>
+      </div>
     </div>`;
   });
   if(!sponsorsList.length){
@@ -1715,6 +1728,7 @@ function renderSectionAjustes(){
         <button class="btn btn-out btn-sm" onclick="agregarSponsor()">+ Agregar sponsor</button>
         <button class="btn btn-pink btn-sm" onclick="guardarSponsors()">Guardar sponsors</button>
       </div>
+      <div style="font-size:10px;color:var(--gray-light);margin-top:8px;">Las imágenes se optimizan automáticamente al subirlas para que carguen rápido. No te olvides de tocar "Guardar sponsors" al terminar.</div>
     </div>
   </div>`;
 
@@ -1798,12 +1812,12 @@ async function guardarTodosNombresGrupos(){
   await supabaseClient.from('configuracion').upsert({clave:'group_names',valor:customGroupNames});
   renderA();renderJContent();showToast('Nombres de grupos guardados ✓');
 }
-// ---- SPONSORS: alta, baja y guardado ----
+// ---- SPONSORS: alta, baja, subida de imagen y guardado ----
+// Lee nombre y link de los inputs (conserva el logo ya cargado en memoria)
 function leerSponsorsDelForm(){
-  // Lee los inputs actuales del editor (para no perder lo tipeado al agregar/quitar filas)
   return sponsorsList.map((s,i)=>({
     nombre:(document.getElementById(`spNombre_${i}`)?.value||'').trim(),
-    logo:(document.getElementById(`spLogo_${i}`)?.value||'').trim(),
+    logo:s.logo||'', // el logo vive en memoria (base64), no en un input de texto
     link:(document.getElementById(`spLink_${i}`)?.value||'').trim(),
   }));
 }
@@ -1817,11 +1831,65 @@ function eliminarSponsor(i){
   sponsorsList.splice(i,1);
   renderAContent();
 }
+
+// Comprime y redimensiona una imagen a base64 para que ocupe poco.
+// Máximo 400px de lado mayor; devuelve un data URL (JPEG o PNG si tiene transparencia).
+function comprimirImagen(file,maxLado=400){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onerror=()=>reject(new Error('No se pudo leer el archivo'));
+    reader.onload=e=>{
+      const img=new Image();
+      img.onerror=()=>reject(new Error('El archivo no es una imagen válida'));
+      img.onload=()=>{
+        let{width,height}=img;
+        if(width>height){ if(width>maxLado){height=Math.round(height*maxLado/width);width=maxLado;} }
+        else{ if(height>maxLado){width=Math.round(width*maxLado/height);height=maxLado;} }
+        const canvas=document.createElement('canvas');
+        canvas.width=width;canvas.height=height;
+        const ctx=canvas.getContext('2d');
+        ctx.drawImage(img,0,0,width,height);
+        // Si el nombre sugiere PNG, conservar transparencia; si no, JPEG (más liviano)
+        const esPng=/\.png$/i.test(file.name);
+        const dataUrl=esPng?canvas.toDataURL('image/png'):canvas.toDataURL('image/jpeg',0.82);
+        resolve(dataUrl);
+      };
+      img.src=e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function subirImagenSponsor(i,inputEl){
+  const file=inputEl.files&&inputEl.files[0];
+  inputEl.value='';
+  if(!file)return;
+  if(!file.type.startsWith('image/')){showToast('Elegí un archivo de imagen');return;}
+  try{
+    showToast('Optimizando imagen...');
+    const dataUrl=await comprimirImagen(file,400);
+    // Guardar nombre/link tipeados y setear el logo de esta fila
+    sponsorsList=leerSponsorsDelForm();
+    sponsorsList[i].logo=dataUrl;
+    renderAContent();
+    showToast('Imagen lista ✓ — acordate de Guardar sponsors');
+  }catch(e){
+    console.error('Error con la imagen:',e);
+    showToast('No se pudo procesar la imagen');
+  }
+}
+
 async function guardarSponsors(){
-  sponsorsList=leerSponsorsDelForm().filter(s=>s.nombre||s.logo);
-  await supabaseClient.from('configuracion').upsert({clave:'sponsors',valor:sponsorsList});
-  renderAContent();renderJContent();
-  showToast('Sponsors guardados ✓');
+  sponsorsList=leerSponsorsDelForm().filter(s=>s.logo||s.nombre);
+  try{
+    await supabaseClient.from('configuracion').upsert({clave:'sponsors',valor:sponsorsList});
+    renderAContent();renderJContent();
+    showToast('Sponsors guardados ✓');
+  }catch(e){
+    console.error('Error guardando sponsors:',e);
+    // El error más común es que las imágenes sean muy pesadas para una fila
+    showToast('No se pudieron guardar. Probá con imágenes más chicas o menos sponsors.');
+  }
 }
 
 async function resetNombresGrupos(){
