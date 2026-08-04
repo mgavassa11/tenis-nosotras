@@ -89,6 +89,9 @@ function maxPosEnCategoria(cat){
 // Calcula los clasificados de una categoría según su config por posición.
 // Devuelve un array de objetos pareja, cada uno con:
 //   .grupoId, .posEnGrupo (1,2,3...), .viaLabel ("1°", "Mejor 2°", etc), .directo (bool)
+// True si la categoría tiene un solo grupo
+function esUnicoGrupo(cat){ return grupos[cat] && grupos[cat].length===1; }
+
 function getQualified(cat){
   const cfg=getClasifCat(cat);
   // 1. Para cada grupo, obtener su tabla ordenada
@@ -96,6 +99,20 @@ function getQualified(cat){
   grupos[cat].forEach(g=>{ tablasPorGrupo[g.id]=getStats(g.id,cat); });
 
   const clasificados=[];
+
+  // CASO ESPECIAL: categoría de un solo grupo con clasificación "primeros X".
+  // No hay "mejores 2dos entre grupos" — simplemente pasan los primeros X del grupo.
+  if(esUnicoGrupo(cat) && cfg.single!==undefined && cfg.single!==0 && cfg.single!=='0'){
+    const g=grupos[cat][0];
+    const tabla=tablasPorGrupo[g.id];
+    const n=(cfg.single==='todos')?tabla.length:Math.min(parseInt(cfg.single)||0,tabla.length);
+    for(let i=0;i<n;i++){
+      const p=tabla[i];
+      if(p)clasificados.push({...p,grupoId:g.id,posEnGrupo:i+1,viaLabel:`${i+1}°`,directo:true});
+    }
+    return clasificados;
+  }
+
   const maxPos=maxPosEnCategoria(cat);
 
   for(let pos=1;pos<=maxPos;pos++){
@@ -145,6 +162,14 @@ function descripcionClasificacion(cat){
   const cfg=getClasifCat(cat);
   const maxPos=maxPosEnCategoria(cat);
   const ordinales={1:'1ros',2:'2dos',3:'3ros',4:'4tos',5:'5tos',6:'6tos',7:'7mos',8:'8vos'};
+
+  // Caso especial: un solo grupo con "primeros X"
+  if(esUnicoGrupo(cat) && cfg.single!==undefined && cfg.single!==0 && cfg.single!=='0'){
+    if(cfg.single==='todos')return 'Clasifican <strong>todas</strong> las parejas del grupo.';
+    const n=parseInt(cfg.single)||0;
+    return `Clasifican las <strong>primeras ${n}</strong> parejas del grupo.`;
+  }
+
   const partes=[];
   for(let pos=1;pos<=maxPos;pos++){
     const v=cfg[pos];
@@ -170,6 +195,11 @@ function descripcionClasificacion(cat){
 // Sirve para dibujar la línea de corte en la tabla del grupo.
 function corteDirectoEnGrupo(cat){
   const cfg=getClasifCat(cat);
+  // Caso un solo grupo: el corte es después de la posición X (primeros X)
+  if(esUnicoGrupo(cat) && cfg.single!==undefined && cfg.single!==0 && cfg.single!=='0'){
+    if(cfg.single==='todos')return 0;
+    return parseInt(cfg.single)||0;
+  }
   let ultimaDirecta=0;
   const maxPos=maxPosEnCategoria(cat);
   for(let pos=1;pos<=maxPos;pos++){
@@ -344,6 +374,7 @@ function pNombre(id){const p=getP(id);return p?`${p.j1} / ${p.j2}`:id;}
 
 function getPlayoffConfig(cat){
   const mode=playoffMode[cat];
+  if(mode==='final') return{total:2,roundName:'final'};
   if(mode==='semis') return{total:4,roundName:'semis'};
   return{total:8,roundName:'cuartos'};
 }
@@ -1285,26 +1316,46 @@ function renderSectionAjustes(){
     const cfg=getClasifCat(cat);
     const maxPos=maxPosEnCategoria(cat);
     const totalClas=totalClasificados(cat);
+    const unico=esUnicoGrupo(cat);
     html+=`<div style="background:#fafafa;border:1.5px solid #eee;border-radius:10px;padding:12px;margin-bottom:12px;">
       <div style="font-size:13px;font-weight:600;color:var(--pink);margin-bottom:8px;">${catLabel(cat)} <span style="font-size:11px;font-weight:400;color:var(--gray-light);">— ${totalClas} clasificados en total</span></div>`;
-    for(let pos=1;pos<=maxPos;pos++){
-      const val=cfg[pos];
-      const valStr=(val===undefined)?'0':String(val);
-      const ordinales={1:'1ros',2:'2dos',3:'3ros',4:'4tos',5:'5tos',6:'6tos',7:'7mos'};
+
+    if(unico){
+      // Un solo grupo: clasifican las primeras X parejas del grupo
+      const g=grupos[cat][0];
+      const total=g.parejas.length;
+      const val=(cfg.single===undefined)?'0':String(cfg.single);
+      html+=`<div style="font-size:11px;color:var(--gray);margin-bottom:8px;">Esta categoría tiene un <strong>único grupo</strong> (${total} parejas). Elegí cuántas de las primeras clasifican:</div>`;
       html+=`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
-        <span style="font-size:12px;color:var(--gray);min-width:100px;">Posición ${pos} (${ordinales[pos]||pos+'°'}):</span>
-        <select id="clasif_${cat}_${pos}" onchange="onClasifSelectChange('${cat}',${pos})" style="width:auto;min-width:130px;">
-          <option value="0" ${valStr==='0'?'selected':''}>No clasifica</option>
-          <option value="todos" ${valStr==='todos'?'selected':''}>Todos</option>
-          <option value="1" ${valStr==='1'?'selected':''}>1 mejor</option>
-          <option value="2" ${valStr==='2'?'selected':''}>2 mejores</option>
-          <option value="3" ${valStr==='3'?'selected':''}>3 mejores</option>
-          <option value="4" ${valStr==='4'?'selected':''}>4 mejores</option>
-          <option value="5" ${valStr==='5'?'selected':''}>5 mejores</option>
-          <option value="6" ${valStr==='6'?'selected':''}>6 mejores</option>
-          <option value="8" ${valStr==='8'?'selected':''}>8 mejores</option>
+        <span style="font-size:12px;color:var(--gray);min-width:130px;">Primeras parejas que clasifican:</span>
+        <select id="clasifSingle_${cat}" onchange="onClasifSingleChange('${cat}')" style="width:auto;min-width:130px;">
+          <option value="0" ${val==='0'?'selected':''}>Ninguna</option>`;
+      for(let n=1;n<=total;n++){
+        html+=`<option value="${n}" ${val===String(n)?'selected':''}>Primeras ${n}</option>`;
+      }
+      html+=`<option value="todos" ${val==='todos'?'selected':''}>Todas</option>
         </select>
       </div>`;
+    }else{
+      for(let pos=1;pos<=maxPos;pos++){
+        const val=cfg[pos];
+        const valStr=(val===undefined)?'0':String(val);
+        const ordinales={1:'1ros',2:'2dos',3:'3ros',4:'4tos',5:'5tos',6:'6tos',7:'7mos'};
+        html+=`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+          <span style="font-size:12px;color:var(--gray);min-width:100px;">Posición ${pos} (${ordinales[pos]||pos+'°'}):</span>
+          <select id="clasif_${cat}_${pos}" onchange="onClasifSelectChange('${cat}',${pos})" style="width:auto;min-width:130px;">
+            <option value="0" ${valStr==='0'?'selected':''}>No clasifica</option>
+            <option value="todos" ${valStr==='todos'?'selected':''}>Todos</option>
+            <option value="1" ${valStr==='1'?'selected':''}>1 mejor</option>
+            <option value="2" ${valStr==='2'?'selected':''}>2 mejores</option>
+            <option value="3" ${valStr==='3'?'selected':''}>3 mejores</option>
+            <option value="4" ${valStr==='4'?'selected':''}>4 mejores</option>
+            <option value="5" ${valStr==='5'?'selected':''}>5 mejores</option>
+            <option value="6" ${valStr==='6'?'selected':''}>6 mejores</option>
+            <option value="8" ${valStr==='8'?'selected':''}>8 mejores</option>
+          </select>
+        </div>`;
+      }
     }
     html+=`<div style="font-size:11px;color:#831843;background:var(--pink-bg);border-radius:8px;padding:8px;margin-top:8px;">${descripcionClasificacion(cat)}</div>`;
     html+=`</div>`;
@@ -1343,6 +1394,14 @@ function onClasifSelectChange(cat,pos){
   if(val==='0'){ delete clasificacionConfig[cat][pos]; }
   else{ if(!clasificacionConfig[cat])clasificacionConfig[cat]={}; clasificacionConfig[cat][pos]=(val==='todos')?'todos':parseInt(val); }
   // Re-render solo la sección de ajustes para actualizar descripción y total
+  renderAContent();
+}
+// Cambio del selector de "primeras X" para categorías de un solo grupo
+function onClasifSingleChange(cat){
+  const val=document.getElementById(`clasifSingle_${cat}`)?.value;
+  if(!clasificacionConfig[cat])clasificacionConfig[cat]={};
+  if(val==='0'){ delete clasificacionConfig[cat].single; }
+  else{ clasificacionConfig[cat].single=(val==='todos')?'todos':parseInt(val); }
   renderAContent();
 }
 async function guardarClasificacion(){
@@ -1700,8 +1759,9 @@ function renderSectionPlayoff(cat){
   const mode=playoffMode[cat];
   let html=`<div class="ibar">Elegí el formato de playoff. Se ajustan automáticamente los clasificados hasta completar el cuadro, evitando que dos parejas del mismo grupo se enfrenten en cuartos.</div>`;
   html+=`<div class="toggle-group">
-    <button class="toggle-btn ${mode==='cuartos'?'active':''}" onclick="setPlayoffMode('${cat}','cuartos')">Cuartos de final (8)</button>
-    <button class="toggle-btn ${mode==='semis'?'active':''}" onclick="setPlayoffMode('${cat}','semis')">Semifinales (4)</button>
+    <button class="toggle-btn ${mode==='cuartos'?'active':''}" onclick="setPlayoffMode('${cat}','cuartos')">Cuartos (8)</button>
+    <button class="toggle-btn ${mode==='semis'?'active':''}" onclick="setPlayoffMode('${cat}','semis')">Semis (4)</button>
+    <button class="toggle-btn ${mode==='final'?'active':''}" onclick="setPlayoffMode('${cat}','final')">Final directa (2)</button>
   </div>`;
 
   const{cfg}=getSeeds(cat);
@@ -1840,6 +1900,19 @@ function buildRoundsForMode(cat,seedsData){
   );
   const order=seedPositionsForBracket(slotsNeeded);
   const orderedPairs=order.map(i=>pairs[i]||{first:null,second:null});
+  if(cfg.total===2){
+    // Final directa: los 2 mejores clasificados juegan la final.
+    // Tomamos el ranking completo (directos + comodines) por rendimiento,
+    // porque con 2 clasificados pueden ser dos 1ros o un 1ro + un 2do.
+    const todos=[...firsts,...seconds];
+    const p1=todos[0]?.id||null;
+    const p2=todos[1]?.id||null;
+    return[
+      {name:'Final',matches:[
+        {id:'f1',p1,p2,sets:[],winner:null}
+      ]},
+    ];
+  }
   if(cfg.total===4){
     return[
       {name:'Semifinales',matches:[
