@@ -972,7 +972,9 @@ function renderPublicView(cat,subTab,targetElId){
 
   // Ranking cruzado por posición: se muestran TODOS los de esa posición
   // (2dos, 3ros, etc de cada grupo), con línea de corte en los que clasifican.
-  {
+  // No aplica a categorías de un solo grupo: ahí la propia tabla de posiciones
+  // del grupo ya ordena todo, no hay nada que comparar entre grupos.
+  if(!esUnicoGrupo(cat)){
     const cfgClasif=getClasifCat(cat);
     const maxPosCat=maxPosEnCategoria(cat);
     const ordinales={2:'2dos',3:'3ros',4:'4tos',5:'5tos',6:'6tos',7:'7mos'};
@@ -1311,6 +1313,20 @@ function renderSectionTiebreak(){
     <strong>Games ganados:</strong> total de games ganados en el grupo.<br>
     <strong>Enfrentamiento directo:</strong> resultado del partido jugado entre las parejas empatadas.
   </div>`;
+
+  // ---- MOSTRAR LA EXPLICACIÓN DEL DESEMPATE A LAS JUGADORAS ----
+  html+=`<div class="grupo" style="margin-top:1.4rem;">
+    <div class="grupo-header">📖 Explicación en la vista de jugadoras</div>
+    <div style="padding:12px;">
+      <div style="font-size:11px;color:var(--gray);margin-bottom:12px;">El desplegable "Ver por qué la clasificación quedó así" muestra, paso a paso, cómo se resolvió el orden de cada grupo. Vos siempre lo ves en el Live. Con esta opción podés mostrárselo también a las jugadoras en su vista de Grupos.</div>
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;">
+        <input type="checkbox" id="chkExplicacionPublica" ${mostrarExplicacionPublica?'checked':''} onchange="toggleExplicacionPublica()" style="width:18px;height:18px;cursor:pointer;">
+        <span>Mostrar la explicación del desempate a las jugadoras</span>
+      </label>
+      <div style="font-size:11px;color:var(--gray-light);margin-top:8px;">${mostrarExplicacionPublica?'✅ Las jugadoras pueden ver la explicación (arranca cerrada, la abren si quieren).':'🔒 Oculta para las jugadoras. Solo vos la ves en el Live.'}</div>
+    </div>
+  </div>`;
+
   return html;
 }
 async function moveTiebreak(idx,dir){
@@ -1806,19 +1822,6 @@ function renderSectionAjustes(){
   });
   html+=`<button class="btn btn-pink btn-sm" onclick="guardarClasificacion()">Guardar clasificación</button>
     <button class="btn btn-out btn-sm" style="margin-left:8px;" onclick="resetClasificacion()">Volver a la config por defecto</button>
-    </div>
-  </div>`;
-
-  // ---- EXPLICACIÓN DEL DESEMPATE EN LA VISTA DE JUGADORAS ----
-  html+=`<div class="grupo" style="margin-bottom:1.2rem;">
-    <div class="grupo-header">📖 Explicación del desempate</div>
-    <div style="padding:12px;">
-      <div style="font-size:11px;color:var(--gray);margin-bottom:12px;">El desplegable "Ver por qué la clasificación quedó así" muestra, paso a paso, cómo se resolvió el orden de cada grupo. Vos siempre lo ves acá en el Live. Con esta opción podés mostrárselo también a las jugadoras en su vista de Grupos.</div>
-      <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;">
-        <input type="checkbox" id="chkExplicacionPublica" ${mostrarExplicacionPublica?'checked':''} onchange="toggleExplicacionPublica()" style="width:18px;height:18px;cursor:pointer;">
-        <span>Mostrar la explicación del desempate a las jugadoras</span>
-      </label>
-      <div style="font-size:11px;color:var(--gray-light);margin-top:8px;">${mostrarExplicacionPublica?'✅ Las jugadoras pueden ver la explicación (arranca cerrada, la abren si quieren).':'🔒 Oculta para las jugadoras. Solo vos la ves en el Live.'}</div>
     </div>
   </div>`;
 
