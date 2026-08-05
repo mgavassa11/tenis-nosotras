@@ -965,9 +965,7 @@ function renderPublicView(cat,subTab,targetElId){
 
   // Ranking cruzado por posición: se muestran TODOS los de esa posición
   // (2dos, 3ros, etc de cada grupo), con línea de corte en los que clasifican.
-  // No aplica a categorías de un solo grupo: ahí el orden de clasificación ya
-  // se ve en la tabla del propio grupo, junto con su explicación de desempate.
-  if(!esUnicoGrupo(cat)){
+  {
     const cfgClasif=getClasifCat(cat);
     const maxPosCat=maxPosEnCategoria(cat);
     const ordinales={2:'2dos',3:'3ros',4:'4tos',5:'5tos',6:'6tos',7:'7mos'};
