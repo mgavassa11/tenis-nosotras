@@ -97,6 +97,11 @@ function parseSponsors(raw){
   }).filter(s=>s.nombre||s.logo);
 }
 
+// Si el administrador habilita mostrar la explicación del desempate ("por qué
+// la clasificación quedó así") también en la vista pública de jugadoras.
+// Por defecto está oculta para las jugadoras (solo la ve el admin en el Live).
+let mostrarExplicacionPublica=false;
+
 // Prioridades de sorteo: {parejaId: número}. Cuando dos parejas del ranking
 // cruzado quedan empatadas en TODO (Pts, Dif, GG y GP) y no jugaron entre sí,
 // el orden lo define un sorteo que el administrador carga manualmente.
@@ -420,6 +425,7 @@ async function loadAllData(){
     if(row.clave==='clasif_config') clasificacionConfig={...JSON.parse(JSON.stringify(CLASIF_DEFAULT)),...row.valor};
     if(row.clave==='sorteo_prioridad') sorteoPrioridad={...row.valor};
     if(row.clave==='sponsors') sponsorsList=parseSponsors(row.valor);
+    if(row.clave==='mostrar_explicacion_publica') mostrarExplicacionPublica=!!row.valor;
   });
 
   ["1era","2da","3era"].forEach(c=>{
@@ -953,8 +959,9 @@ function renderPublicView(cat,subTab,targetElId){
       ${tiebreakLegendHtml()}
     </div>`;
     html+=renderMatrixTable(g,cat);
-    // Explicación del desempate — SOLO visible en el panel Live del admin
-    if(esVistaAdmin){
+    // Explicación del desempate. Siempre visible para el admin en el Live;
+    // para las jugadoras solo si el admin habilitó mostrarla públicamente.
+    if(esVistaAdmin||mostrarExplicacionPublica){
       const abierta=!!state.explicacionAbierta[g.id];
       html+=`<div style="margin:-.4rem 0 1.2rem;">
         <button class="btn btn-blk btn-sm btn-full" onclick="toggleExplicacionLive('${g.id}')">${abierta?'▲ Ocultar':'▼ Ver'} por qué la clasificación quedó así</button>
@@ -1467,7 +1474,12 @@ function renderSectionPairs(cat){
 
 function toggleExplicacionLive(gid){
   state.explicacionAbierta[gid]=!state.explicacionAbierta[gid];
-  renderPublicView(state.liveCat,state.liveSubTab,'liveContent');
+  // Re-renderizar la vista que está activa: el Live del admin o la de jugadoras
+  if(state.mainView==='admin'){
+    renderPublicView(state.liveCat,state.liveSubTab,'liveContent');
+  }else{
+    renderJContent();
+  }
 }
 
 // Sorteo: el admin intercambia dos parejas EMPATADAS EN TODO en el ranking
@@ -1797,7 +1809,33 @@ function renderSectionAjustes(){
     </div>
   </div>`;
 
+  // ---- EXPLICACIÓN DEL DESEMPATE EN LA VISTA DE JUGADORAS ----
+  html+=`<div class="grupo" style="margin-bottom:1.2rem;">
+    <div class="grupo-header">📖 Explicación del desempate</div>
+    <div style="padding:12px;">
+      <div style="font-size:11px;color:var(--gray);margin-bottom:12px;">El desplegable "Ver por qué la clasificación quedó así" muestra, paso a paso, cómo se resolvió el orden de cada grupo. Vos siempre lo ves acá en el Live. Con esta opción podés mostrárselo también a las jugadoras en su vista de Grupos.</div>
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;">
+        <input type="checkbox" id="chkExplicacionPublica" ${mostrarExplicacionPublica?'checked':''} onchange="toggleExplicacionPublica()" style="width:18px;height:18px;cursor:pointer;">
+        <span>Mostrar la explicación del desempate a las jugadoras</span>
+      </label>
+      <div style="font-size:11px;color:var(--gray-light);margin-top:8px;">${mostrarExplicacionPublica?'✅ Las jugadoras pueden ver la explicación (arranca cerrada, la abren si quieren).':'🔒 Oculta para las jugadoras. Solo vos la ves en el Live.'}</div>
+    </div>
+  </div>`;
+
   return html;
+}
+
+// El admin activa/desactiva mostrar la explicación del desempate a las jugadoras
+async function toggleExplicacionPublica(){
+  mostrarExplicacionPublica=!!document.getElementById('chkExplicacionPublica')?.checked;
+  try{
+    await supabaseClient.from('configuracion').upsert({clave:'mostrar_explicacion_publica',valor:mostrarExplicacionPublica});
+    renderAContent();renderJContent();
+    showToast(mostrarExplicacionPublica?'Explicación visible para las jugadoras ✓':'Explicación oculta para las jugadoras');
+  }catch(e){
+    console.error('Error guardando la opción:',e);
+    showToast('No se pudo guardar la opción');
+  }
 }
 
 // Guarda todos los nombres de grupos de una vez
