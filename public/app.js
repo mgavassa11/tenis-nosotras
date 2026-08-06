@@ -1671,6 +1671,8 @@ function renderExplicacionRanking(cat,pos){
   html+=`</div>`;
   return html;
 }
+// Cambia el grupo seleccionado en la pestaña "Parejas y grupos" del admin
+function selectPairsGroup(cat,gid){state.adminPairsGroup[cat]=gid;renderA();}
 
 // Genera un id de grupo único que no exista en NINGUNA categoría.
 // Empieza con el prefijo numérico de la categoría (1/2/3) + letra correlativa.
