@@ -97,6 +97,17 @@ function parseSponsors(raw){
   }).filter(s=>s.nombre||s.logo);
 }
 
+// Información editable del torneo (título, subtítulo y datos de "Direcciones").
+// Los valores por defecto son los que estaban cargados; si en la base hay una
+// versión guardada, se usa esa. Se guarda bajo la clave 'torneo_info'.
+const TORNEO_INFO_DEFAULT={
+  titulo:'🎾 Tenis y Nosotras × club24',
+  subtitulo:'Torneo Americano de Damas — 26 de Junio · Los Cardales Country Club',
+  direccionesLink:'https://maps.app.goo.gl/xM1vZvBGgTdRXCtk8',
+  direccionesMapa:'https://i.imgur.com/966dTmZ.jpeg'
+};
+let torneoInfo={...TORNEO_INFO_DEFAULT};
+
 // Si el administrador habilita mostrar la explicación del desempate ("por qué
 // la clasificación quedó así") también en la vista pública de jugadoras.
 // Por defecto está oculta para las jugadoras (solo la ve el admin en el Live).
@@ -426,6 +437,7 @@ async function loadAllData(){
     if(row.clave==='sorteo_prioridad') sorteoPrioridad={...row.valor};
     if(row.clave==='sponsors') sponsorsList=parseSponsors(row.valor);
     if(row.clave==='mostrar_explicacion_publica') mostrarExplicacionPublica=!!row.valor;
+    if(row.clave==='torneo_info'&&row.valor&&typeof row.valor==='object') torneoInfo={...TORNEO_INFO_DEFAULT,...row.valor};
   });
 
   ["1era","2da","3era"].forEach(c=>{
@@ -748,8 +760,8 @@ function renderMainTabs(){
   document.getElementById('app').innerHTML=`
     <div class="header">
       <div class="header-credit">Cuadro del torneo<br>by @marcosgavassaa</div>
-      <h1>🎾 Tenis y Nosotras × club24</h1>
-      <p>Torneo Americano de Damas — 26 de Junio · Los Cardales Country Club</p>
+      <h1>${torneoInfo.titulo}</h1>
+      <p>${torneoInfo.subtitulo}</p>
     </div>
     <div class="pillbar" id="mainTabs"></div>
     <div id="view-jugadoras" style="display:${state.mainView==='jugadoras'?'block':'none'};">
@@ -830,12 +842,16 @@ function renderPublicView(cat,subTab,targetElId){
 
   if(subTab==='direcciones'){
     html+=`<div class="phase-label">Cómo llegar</div>`;
-    html+=`<a href="https://maps.app.goo.gl/xM1vZvBGgTdRXCtk8" target="_blank" rel="noopener noreferrer" class="btn btn-pink btn-full" style="margin-bottom:1.2rem;text-decoration:none;">📍 Cómo llegar a Cardales</a>`;
-    html+=`<div class="map-card">
-      <img src="https://i.imgur.com/966dTmZ.jpeg" alt="Mapa de acceso a las canchas" class="map-img">
-      <div class="map-caption"><span class="map-dash">- - - -</span> dirección a canchas 11-20 caminando</div>
-      <div class="map-caption"><span class="map-line">━━━━━</span> dirección a canchas 11-20 en auto</div>
-    </div>`;
+    if(torneoInfo.direccionesLink){
+      html+=`<a href="${torneoInfo.direccionesLink}" target="_blank" rel="noopener noreferrer" class="btn btn-pink btn-full" style="margin-bottom:1.2rem;text-decoration:none;">📍 Cómo llegar a Cardales</a>`;
+    }
+    if(torneoInfo.direccionesMapa){
+      html+=`<div class="map-card">
+        <img src="${torneoInfo.direccionesMapa}" alt="Mapa de acceso a las canchas" class="map-img">
+        <div class="map-caption"><span class="map-dash">- - - -</span> dirección a canchas 11-20 caminando</div>
+        <div class="map-caption"><span class="map-line">━━━━━</span> dirección a canchas 11-20 en auto</div>
+      </div>`;
+    }
     el.innerHTML=html;
     return;
   }
@@ -1669,11 +1685,76 @@ async function resetNombresCategorias(){
   showToast('Nombres restablecidos');
 }
 
+// ---- DATOS DEL TORNEO: guardar y restablecer ----
+async function guardarTorneoInfo(){
+  const nuevo={
+    titulo:(document.getElementById('tiTitulo')?.value||'').trim()||TORNEO_INFO_DEFAULT.titulo,
+    subtitulo:(document.getElementById('tiSubtitulo')?.value||'').trim(),
+    direccionesLink:(document.getElementById('tiDirLink')?.value||'').trim(),
+    direccionesMapa:(document.getElementById('tiDirMapa')?.value||'').trim(),
+  };
+  torneoInfo={...torneoInfo,...nuevo};
+  try{
+    await supabaseClient.from('configuracion').upsert({clave:'torneo_info',valor:torneoInfo});
+    // Re-renderizar todo: el header vive fuera de las vistas
+    renderMainTabs();
+    if(state.mainView==='admin'&&state.adminUnlocked)renderA();else renderJ();
+    showToast('Datos del torneo guardados ✓');
+  }catch(e){
+    console.error('Error guardando datos del torneo:',e);
+    showToast('No se pudieron guardar los datos');
+  }
+}
+async function resetTorneoInfo(){
+  if(!confirm('¿Volver a los datos originales del torneo (título, subtítulo y direcciones)?'))return;
+  torneoInfo={...TORNEO_INFO_DEFAULT};
+  try{
+    await supabaseClient.from('configuracion').upsert({clave:'torneo_info',valor:torneoInfo});
+    renderMainTabs();
+    if(state.mainView==='admin'&&state.adminUnlocked)renderA();else renderJ();
+    showToast('Datos del torneo restablecidos');
+  }catch(e){
+    console.error(e);showToast('No se pudo restablecer');
+  }
+}
+
 // ====================================================
 // AJUSTES (nombres de categorías, grupos y clasificación)
 // ====================================================
 function renderSectionAjustes(){
-  let html=`<div class="ibar">Configurá acá los nombres de las categorías y grupos, y cómo se define la clasificación al playoff de cada categoría.</div>`;
+  let html=`<div class="ibar">Configurá acá los datos del torneo, los nombres de las categorías y grupos, y cómo se define la clasificación al playoff de cada categoría.</div>`;
+
+  // ---- 0. DATOS DEL TORNEO (título, subtítulo, direcciones) ----
+  const esc=s=>(s||'').replace(/"/g,'&quot;');
+  html+=`<div class="grupo" style="margin-bottom:1.2rem;">
+    <div class="grupo-header">📝 Datos del torneo</div>
+    <div style="padding:12px;">
+      <div style="font-size:11px;color:var(--gray);margin-bottom:10px;">Título y subtítulo que aparecen arriba de todo, y los datos de la pestaña "Direcciones".</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <div>
+          <div style="font-size:12px;color:var(--gray-light);margin-bottom:3px;">Título del torneo:</div>
+          <input id="tiTitulo" value="${esc(torneoInfo.titulo)}" placeholder="🎾 Nombre del torneo" style="width:100%;">
+        </div>
+        <div>
+          <div style="font-size:12px;color:var(--gray-light);margin-bottom:3px;">Subtítulo:</div>
+          <input id="tiSubtitulo" value="${esc(torneoInfo.subtitulo)}" placeholder="Ej: Torneo Americano — Fecha · Lugar" style="width:100%;">
+        </div>
+        <div>
+          <div style="font-size:12px;color:var(--gray-light);margin-bottom:3px;">Link de "Cómo llegar" (Google Maps):</div>
+          <input id="tiDirLink" value="${esc(torneoInfo.direccionesLink)}" placeholder="https://maps.app.goo.gl/..." style="width:100%;">
+        </div>
+        <div>
+          <div style="font-size:12px;color:var(--gray-light);margin-bottom:3px;">URL de la imagen del mapa:</div>
+          <input id="tiDirMapa" value="${esc(torneoInfo.direccionesMapa)}" placeholder="https://i.imgur.com/..." style="width:100%;">
+          ${torneoInfo.direccionesMapa?`<img src="${torneoInfo.direccionesMapa}" alt="mapa" style="max-width:100%;max-height:120px;object-fit:contain;border:1px solid #eee;border-radius:6px;margin-top:6px;display:block;">`:''}
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+        <button class="btn btn-pink btn-sm" onclick="guardarTorneoInfo()">Guardar datos del torneo</button>
+        <button class="btn btn-out btn-sm" onclick="resetTorneoInfo()">Volver a los datos originales</button>
+      </div>
+    </div>
+  </div>`;
 
   // ---- 1. NOMBRES DE CATEGORÍAS ----
   html+=`<div class="grupo" style="margin-bottom:1.2rem;">
