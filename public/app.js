@@ -1033,6 +1033,16 @@ function renderPublicView(cat,subTab,targetElId){
           En grupos de 5 parejas, las stats de posiciones 2° en adelante se calculan excluyendo el partido contra la última pareja del grupo, para comparar en igualdad de partidos jugados.
         </div>
       </div>`;
+      // Desplegable con la explicación del orden — mismas reglas de visibilidad
+      // que la de los grupos: siempre para el admin, para jugadoras si está habilitado.
+      if(esVistaAdmin||mostrarExplicacionPublica){
+        const claveExp=`rank_${cat}_${pos}`;
+        const abiertaR=!!state.explicacionAbierta[claveExp];
+        html+=`<div style="margin:-.4rem 0 1.2rem;">
+          <button class="btn btn-blk btn-sm btn-full" onclick="toggleExplicacionLive('${claveExp}')">${abiertaR?'▲ Ocultar':'▼ Ver'} por qué quedó este orden</button>
+          ${abiertaR?renderExplicacionRanking(cat,pos):''}
+        </div>`;
+      }
     }
   }
 
@@ -1584,7 +1594,83 @@ function renderExplicacionGrupo(gId,cat){
   html+=`</div>`;
   return html;
 }
-function selectPairsGroup(cat,gid){state.adminPairsGroup[cat]=gid;renderA();}
+
+// Genera la explicación paso a paso de por qué el ranking cruzado (mejores 2das,
+// 3ras, etc.) quedó en ese orden. A diferencia de un grupo, acá las parejas NO
+// jugaron entre sí, así que el orden es puramente por Pts → Dif → GG → GP → sorteo.
+function explicarRankingCruzado(cat,pos){
+  const lista=rankingPorPosicion(cat,pos);
+  const nom=p=>`${p.j1} / ${p.j2} (${groupLabelShort(p.grupoId)})`;
+  const unir=arr=>arr.length<=1?arr.join(''):arr.slice(0,-1).join(', ')+' y '+arr[arr.length-1];
+  const pasos=[];
+  const criterios=[
+    {key:'pts',label:'Puntos',val:p=>p.pts,fmt:v=>v},
+    {key:'bal',label:'Diferencia de games',val:p=>p.bal,fmt:v=>(v>0?'+':'')+v},
+    {key:'gg',label:'Games ganados',val:p=>p.gg,fmt:v=>v},
+    {key:'gp',label:'Games perdidos (menos es mejor)',val:p=>p.gp,fmt:v=>v},
+  ];
+
+  // Recorre la lista ya ordenada y explica, en cada "frontera" entre dos parejas
+  // consecutivas, cuál criterio las separó.
+  function explicarBloque(bloque,idxCrit){
+    if(bloque.length<=1)return;
+    if(idxCrit>=criterios.length){
+      // Se agotaron los criterios: empate total → sorteo
+      pasos.push({tipo:'sorteo',texto:`${unir(bloque.map(nom))} quedaron idénticas en todos los criterios (y no jugaron entre sí, son de grupos distintos). El orden entre ellas se define por <strong>sorteo</strong> a cargo de la organización.`});
+      return;
+    }
+    const c=criterios[idxCrit];
+    // ¿Este criterio separa algo dentro del bloque?
+    const valores=bloque.map(c.val);
+    const todosIguales=valores.every(v=>v===valores[0]);
+    if(todosIguales){
+      pasos.push({tipo:'salta',texto:`Todas tienen el mismo valor en <strong>${c.label}</strong> (${c.fmt(valores[0])}). No las separa; se pasa al siguiente criterio.`});
+      explicarBloque(bloque,idxCrit+1);
+      return;
+    }
+    // Separa: mostrar el detalle y sub-agrupar por valor igual
+    const detalle=bloque.map(p=>`${nom(p)}: ${c.fmt(c.val(p))}`).join(' · ');
+    pasos.push({tipo:'resuelve',crit:c.label,texto:`Se ordenan por <strong>${c.label}</strong> → ${detalle}.`});
+    // Sub-bloques de parejas con el MISMO valor en este criterio → siguen desempatando
+    let i=0;
+    while(i<bloque.length){
+      let j=i;
+      while(j<bloque.length&&c.val(bloque[j])===c.val(bloque[i]))j++;
+      const sub=bloque.slice(i,j);
+      if(sub.length>1)explicarBloque(sub,idxCrit+1);
+      i=j;
+    }
+  }
+  explicarBloque(lista,0);
+  return{pasos,lista};
+}
+
+// HTML del desplegable de explicación para una tabla de ranking cruzado
+function renderExplicacionRanking(cat,pos){
+  const{pasos,lista}=explicarRankingCruzado(cat,pos);
+  let html=`<div style="border:1.5px solid #ddd;border-top:none;border-radius:0 0 10px 10px;padding:14px;background:#fff;">`;
+  html+=`<div style="font-size:11px;color:var(--gray);margin-bottom:12px;background:#fafafa;border-radius:8px;padding:8px 10px;">
+    <strong>Orden de comparación:</strong> 1) Puntos → 2) Diferencia de games → 3) Games ganados → 4) Games perdidos (menos es mejor) → 5) Sorteo.
+    <br>Estas parejas son de grupos distintos, así que <strong>no jugaron entre sí</strong>: por eso no se usa enfrentamiento directo.
+  </div>`;
+  if(!pasos.length){
+    html+=`<div style="font-size:12px;color:var(--gray-light);">Hay una sola pareja en esta posición: no hay nada que comparar.</div>`;
+  }else{
+    html+=`<div style="display:flex;flex-direction:column;gap:8px;">`;
+    pasos.forEach(s=>{
+      let icon='',color='#555',bg='#fafafa',border='#eee';
+      if(s.tipo==='resuelve'){icon='✓';color='#166534';bg='#f0fdf4';border='#bbf7d0';}
+      else if(s.tipo==='salta'){icon='→';color='#854d0e';bg='#fffbeb';border='#fde047';}
+      else if(s.tipo==='sorteo'){icon='🎲';color='#831843';bg='var(--pink-bg)';border='#f3c8de';}
+      html+=`<div style="background:${bg};border:1px solid ${border};border-radius:8px;padding:8px 10px;font-size:12px;color:${color};line-height:1.5;">
+        ${icon?`<strong>${icon}</strong> `:''}${s.texto}
+      </div>`;
+    });
+    html+=`</div>`;
+  }
+  html+=`</div>`;
+  return html;
+}
 
 // Genera un id de grupo único que no exista en NINGUNA categoría.
 // Empieza con el prefijo numérico de la categoría (1/2/3) + letra correlativa.
