@@ -390,13 +390,17 @@ async function seedInitialData(){
 }
 
 async function loadAllData(){
-  const [{data:pairsData},{data:matchesData},{data:schedData},{data:playoffRows},{data:configRows}]=await Promise.all([
+  const responses=await Promise.all([
     supabaseClient.from('parejas').select('*'),
     supabaseClient.from('partidos').select('*'),
     supabaseClient.from('horarios').select('*'),
     supabaseClient.from('playoff').select('*'),
     supabaseClient.from('configuracion').select('*'),
   ]);
+  // Conservar los últimos datos si una consulta falla durante la actualización.
+  const failed=responses.find(result=>result.error);
+  if(failed)throw failed.error;
+  const [{data:pairsData},{data:matchesData},{data:schedData},{data:playoffRows},{data:configRows}]=responses;
 
   grupos={"1era":[],"2da":[],"3era":[]};
   const groupMap={};
@@ -478,7 +482,7 @@ function h2hResult(pairAId,pairBId,gId){
   const m=partidos.find(mm=>mm.grupoId===gId&&mm.played&&((mm.p1===pairAId&&mm.p2===pairBId)||(mm.p1===pairBId&&mm.p2===pairAId)));
   if(!m)return 0;
   let w1=0,w2=0;
-  m.sets.forEach(s=>{if(s[0]>s[1])w1++;else w2++;});
+  m.sets.forEach(s=>{if(s[0]>s[1])w1++;else if(s[1]>s[0])w2++;});
   const aIsP1=m.p1===pairAId;
   const aWon=aIsP1?w1>w2:w2>w1;
   return aWon?1:-1;
@@ -861,7 +865,7 @@ function renderPublicView(cat,subTab,targetElId){
     const pendPlayoff=playoffData[cat]
       ? playoffData[cat].rounds.flatMap(r=>r.matches
           .filter(m=>m.p1&&m.p2&&(!m.sets||!m.sets.length))
-          .map(m=>({...m,grupoId:r.name,isPlayoff:true})))
+          .map(m=>({...m,id:uiPlayoffId(cat,m.id),grupoId:r.name,isPlayoff:true})))
       : [];
     let pend=[...pendPlayoff,...pendGrupos];
     pend.sort((a,b)=>{
@@ -1123,7 +1127,7 @@ function getSchedDisplay(sched){
 }
 function renderPCard(m){
   const n1=pJ1(m.p1),nn1=pJ2(m.p1),n2=pJ1(m.p2),nn2=pJ2(m.p2);
-  let w1=0,w2=0;m.sets.forEach(s=>{if(s[0]>s[1])w1++;else w2++;});
+  let w1=0,w2=0;m.sets.forEach(s=>{if(s[0]>s[1])w1++;else if(s[1]>s[0])w2++;});
   const win=m.played?(w1>w2?m.p1:m.p2):null;
   let s1='',s2='';
   m.sets.forEach(s=>{s1+=`<span class="sbox ${s[0]>s[1]?'won':''}">${s[0]}</span>`;s2+=`<span class="sbox ${s[1]>s[0]?'won':''}">${s[1]}</span>`;});
@@ -2414,7 +2418,7 @@ function renderResInput(m){
 }
 function renderResDone(m){
   const n1=pJ1(m.p1)+' / '+pJ2(m.p1),n2=pJ1(m.p2)+' / '+pJ2(m.p2);
-  let w1=0,w2=0;m.sets.forEach(s=>{if(s[0]>s[1])w1++;else w2++;});
+  let w1=0,w2=0;m.sets.forEach(s=>{if(s[0]>s[1])w1++;else if(s[1]>s[0])w2++;});
   const stag=m.simulated?` <span class="sim-badge">simulado</span>`:'';
   return `<div class="sched-card">
     <div class="sched-card-hdr">${groupLabel(m.grupoId)}${stag}</div>
@@ -2440,7 +2444,7 @@ async function saveRes(mId){
     if(na+nb>0)sets.push([na>nb?1:0,na>nb?0:1]);
   }
   if(!sets.length){showToast('Ingresá un resultado');return;}
-  let w1=0,w2=0;sets.forEach(s=>{if(s[0]>s[1])w1++;else w2++;});
+  let w1=0,w2=0;sets.forEach(s=>{if(s[0]>s[1])w1++;else if(s[1]>s[0])w2++;});
   if(w1===w2){showToast('Debe haber un ganador');return;}
   m.sets=sets;m.played=true;m.simulated=false;
   await supabaseClient.from('partidos').update({sets,jugado:true,simulado:false}).eq('id',mId);
@@ -2551,7 +2555,7 @@ function renderSectionPlayoff(cat){
             <div><label style="margin-top:0;font-size:11px;">Hora</label><input type="time" id="hora_${m.id}" value="${sched.hora}" ${sched.after?'disabled':''} onchange="saveSchedGeneric('${m.id}')"></div>
           </div>`:''}`;
         if(m.sets&&m.sets.length){
-          let w1=0,w2=0;m.sets.forEach(s=>{if(s[0]>s[1])w1++;else w2++;});
+          let w1=0,w2=0;m.sets.forEach(s=>{if(s[0]>s[1])w1++;else if(s[1]>s[0])w2++;});
           html+=`<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;background:#fff;border:1px solid #eee;border-radius:8px;font-size:12px;flex-wrap:wrap;gap:6px;">
             <span><span style="color:var(--pink);font-weight:500;">${w1>w2?n1:n2}</span> — ${m.sets.map(s=>s[0]+'-'+s[1]).join(' ')}</span>
             <button class="btn btn-red btn-sm" onclick="delPO('${cat}',${ri},${mi})">Borrar</button>
@@ -2708,7 +2712,7 @@ async function savePO(cat,ri,mi){
     if(na+nb>0)sets.push([na>nb?1:0,na>nb?0:1]);
   }
   if(!sets.length){showToast('Ingresá un resultado');return;}
-  let w1=0,w2=0;sets.forEach(s=>{if(s[0]>s[1])w1++;else w2++;});
+  let w1=0,w2=0;sets.forEach(s=>{if(s[0]>s[1])w1++;else if(s[1]>s[0])w2++;});
   if(w1===w2){showToast('Debe haber ganador');return;}
   m.sets=sets;m.winner=w1>w2?m.p1:m.p2;
   const nr=playoffData[cat].rounds[ri+1];
@@ -3109,4 +3113,287 @@ function showToast(msg){const t=document.getElementById('toast');t.textContent=m
 // ====================================================
 // ARRANCAR LA APP
 // ====================================================
+// Interfaz 2026-10. Se integra con los datos y reglas originales del torneo.
+const UI_CATS=['1era','2da','3era'];
+const ui={tab:'browse',pairId:'',person:'j1',group:'all',scope:'all',query:'',restored:false,adminCat:'all',adminGroup:'all',adminStatus:'pending',adminQuery:'',editor:null,busy:false,notice:'',noticeError:false,undo:null,loadedAt:0,refreshing:false,refreshError:false};
+const uiEsc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uiArg=v=>uiEsc(JSON.stringify(v));
+const uiNorm=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+const uiClone=v=>JSON.parse(JSON.stringify(v));
+const uiStoreKey='tenis-nosotras:jugadora:'+SUPABASE_URL;
+function uiUrl(value,image=false){if(!value||!String(value).trim())return '';try{if(image&&/^data:image\/(png|jpeg|jpg|webp|gif);base64,/i.test(value))return value;const u=new URL(value,location.href);return ['http:','https:'].includes(u.protocol)?u.href:'';}catch{return '';}}
+function uiPeople(){return UI_CATS.flatMap(cat=>(grupos[cat]||[]).flatMap(g=>g.parejas.flatMap(p=>['j1','j2'].map(person=>({id:p.id,person,name:p[person],partner:p[person==='j1'?'j2':'j1'],cat,gid:g.id}))))).sort((a,b)=>a.name.localeCompare(b.name,'es'));}
+function uiSelected(){return uiPeople().find(p=>p.id===ui.pairId&&p.person===ui.person)||null;}
+function uiRestore(){if(ui.restored)return;ui.restored=true;try{const p=JSON.parse(localStorage.getItem(uiStoreKey)||'null');if(p){ui.pairId=p.id;ui.person=p.person==='j2'?'j2':'j1';const found=uiSelected();if(found){ui.tab='home';state.cat=found.cat;}else ui.pairId='';}}catch{}}
+function uiChoose(id,person){ui.pairId=id;ui.person=person;const p=uiSelected();if(!p)return;ui.query='';ui.tab='home';state.cat=p.cat;ui.group='all';ui.scope='mine';try{localStorage.setItem(uiStoreKey,JSON.stringify({id,person}));}catch{}renderJ();}
+function uiSelectFromList(index){const p=uiPeople().filter(p=>uiNorm(p.name).includes(uiNorm(ui.query)))[Number(index)];if(p)uiChoose(p.id,p.person);}
+function uiPlayerOptions(){const list=uiPeople().filter(p=>uiNorm(p.name).includes(uiNorm(ui.query)));const select=document.getElementById('ui-player-select');if(select)select.innerHTML='<option value="">Elegí tu nombre de la lista</option>'+list.map((p,i)=>`<option value="${i}">${uiEsc(p.name)} · ${uiEsc(catLabel(p.cat))} · ${uiEsc(groupLabel(p.gid))}</option>`).join('');const results=document.getElementById('ui-search-results');if(results)results.innerHTML=!ui.query?'':list.length?list.slice(0,6).map(p=>`<button class="ui-search-option" onclick="uiChoose(${uiArg(p.id)},${uiArg(p.person)})">${uiEsc(p.name)}<small>${uiEsc(catLabel(p.cat))} · ${uiEsc(groupLabel(p.gid))} · Pareja: ${uiEsc(p.partner)}</small></button>`).join('')+(list.length>6?'<p class="ui-muted">Hay más coincidencias en la lista desplegable.</p>':''):'<p role="status">No encontramos ese nombre. Probá con el apellido.</p>';}
+function uiSearch(value){ui.query=value;uiPlayerOptions();}
+function uiPlayoffId(cat,id){return 'po:'+cat+':'+encodeURIComponent(id);}
+function uiAllMatches(){return [...partidos.map(m=>({...m,isPlayoff:false})),...UI_CATS.flatMap(cat=>(playoffData[cat]?.rounds||[]).flatMap((r,ri)=>r.matches.map((m,mi)=>({...m,id:uiPlayoffId(cat,m.id),sourceId:m.id,cat,grupoId:'playoff',roundName:r.name,ri,mi,isPlayoff:true,isPreview:!!playoffData[cat].isPreview,played:!!(m.sets&&m.sets.length)}))))];}
+function uiSortMatches(a,b){if(a.played!==b.played)return a.played?1:-1;const x=getSched(a.id),y=getSched(b.id);const rank=s=>s.after?1:s.hora?0:2;return rank(x)-rank(y)||String(x.hora||'').localeCompare(String(y.hora||''))||a.id.localeCompare(b.id);}
+function uiMatchLabel(m){return catLabel(m.cat)+' · '+(m.isPlayoff?m.roundName:groupLabel(m.grupoId));}
+function uiPair(id){const p=getP(id);return p?`${uiEsc(p.j1)}<br>${uiEsc(p.j2)}`:'Por definir';}
+function uiMatchCard(m,admin=false){const s=getSched(m.id),d=getSchedDisplay(s);const score=(m.sets||[]).map(x=>x.join('–')).join(' · ');return `<article class="ui-match"><div class="ui-match-schedule"><strong>${uiEsc(s.after?'A continuación':s.hora||'Por definir')}</strong><span>${s.cancha?'Cancha '+uiEsc(s.cancha):'Cancha a confirmar'}</span>${d.waitNames?`<small>Después de ${uiEsc(d.waitNames)}</small>`:''}</div><div class="ui-match-teams"><small>${uiEsc(uiMatchLabel(m))}</small><div>${uiPair(m.p1)}</div><span class="ui-versus">vs.</span><div>${uiPair(m.p2)}</div></div><div class="ui-match-actions"><span class="ui-badge ${m.played?'ui-success':''}">${m.played?'Finalizado · '+uiEsc(score):'Pendiente'}${m.simulated?' · Simulado':''}${m.isPreview?' · Cuadro provisional':''}</span>${admin?`<button class="btn ${m.played?'btn-out':'btn-pink'}" ${!m.p1||!m.p2||m.isPreview?'disabled':''} onclick="uiOpenEditor(${uiArg(m.id)},'result')">${m.played?'Editar resultado':'Cargar resultado'}</button><button class="btn ui-link" onclick="uiOpenEditor(${uiArg(m.id)},'schedule')">${s.cancha||s.hora||s.after?'Cambiar horario':'Asignar horario'}</button>`:''}</div></article>`;}
+function uiGroupCard(g,cat){const selected=uiSelected();return `<section class="ui-card"><div class="ui-section-heading"><h3>${uiEsc(groupLabel(g.id))}</h3><span class="ui-badge">${uiEsc(catLabel(cat))}</span></div><table class="ui-ranking"><thead><tr><th scope="col">Pareja</th><th scope="col">Pts</th><th scope="col">Dif.</th></tr></thead><tbody>${getStats(g.id,cat).map((p,i)=>`<tr class="${p.id===selected?.id?'ui-selected-row':''}"><td><span class="ui-position">${i+1}</span><span>${uiEsc(p.j1)}<br>${uiEsc(p.j2)}${p.id===selected?.id?'<small>Tu pareja</small>':''}</span></td><td>${p.pts}</td><td>${p.bal>0?'+':''}${p.bal}</td></tr>`).join('')}</tbody></table><p class="ui-muted">${descripcionClasificacion(cat)}</p><button class="btn ui-link ui-full" onclick="uiViewGroupMatches(${uiArg(cat)},${uiArg(g.id)})">Ver partidos del grupo</button><details><summary>Resultados y criterios de desempate</summary>${renderMatrixTable(g,cat)}${tiebreakLegendHtml()}</details></section>`;}
+function uiViewGroupMatches(cat,gid){state.cat=cat;ui.group=gid;ui.scope='all';ui.tab='matches';renderJ();}
+function uiTab(tab){ui.tab=tab;if(tab==='matches'&&!uiSelected())ui.scope='all';renderJ();}
+function uiCategory(cat){state.cat=cat;ui.group='all';renderJ();}
+function uiGroup(gid){ui.group=gid;renderJContent();}
+function uiScope(scope){ui.scope=scope;renderJ();}
+function uiPublicPage(tab){if(!uiLeaveEditor())return;state.mainView='jugadoras';ui.tab=tab;renderMainTabs();renderJ();}
+function uiShowMine(){ui.tab='matches';ui.scope='mine';renderJ();}
+function uiOtherGroups(){const p=uiSelected();if(p)state.cat=p.cat;ui.tab='browse';ui.group='all';renderJ();}
+function uiSponsors(){const list=parseSponsors(sponsorsList);return `<section class="ui-sponsors" aria-label="Sponsors del torneo"><div class="ui-sponsor-heading">Nos acompañan<strong>Sponsors</strong></div><div class="ui-sponsor-list">${list.length?list.map(s=>{const logo=uiUrl(s.logo,true),link=uiUrl(s.link);const content=logo?`<img src="${uiEsc(logo)}" alt="${uiEsc(s.nombre||'Sponsor del torneo')}" loading="lazy" onerror="this.replaceWith(document.createTextNode(this.alt))">`:uiEsc(s.nombre);return link?`<a href="${uiEsc(link)}" target="_blank" rel="noopener noreferrer" class="ui-sponsor">${content}</a>`:`<span class="ui-sponsor">${content}</span>`;}).join(''):'<span class="ui-muted">Próximamente</span>'}</div></section>`;}
+function uiHeader(){const map=uiUrl(torneoInfo.direccionesLink);return `<header class="ui-header"><div><h1>${uiEsc(torneoInfo.titulo)}</h1><p>${uiEsc(torneoInfo.subtitulo)}</p></div><button class="btn ui-link" onclick="switchMain('${state.mainView==='admin'?'jugadoras':'admin'}')">${state.mainView==='admin'?'Ver jugadoras':'Administración'}</button></header><section class="ui-tournament-bar" aria-label="Ubicación y reglamento"><div class="ui-top-links"><button class="btn btn-out" onclick="uiPublicPage('direcciones')">Ubicación</button>${map?`<a class="btn ui-link" href="${uiEsc(map)}" target="_blank" rel="noopener noreferrer">Cómo llegar</a>`:''}<button class="btn btn-out" onclick="uiPublicPage('reglamento')">Reglamento</button></div><div class="ui-sync"><span id="ui-sync-status" role="status">${uiSyncLabel()}</span><button class="btn ui-link" onclick="uiRefresh(true)">Actualizar</button></div></section><div id="ui-sponsors">${uiSponsors()}</div>`;}
+function uiSyncLabel(){return ui.refreshing?'Actualizando…':ui.refreshError?'No se pudo actualizar':ui.loadedAt?'Actualizado '+new Date(ui.loadedAt).toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'}):'Cargando datos…';}
+renderMainTabs=function(){document.getElementById('app').innerHTML=uiHeader()+`<main id="view-jugadoras" style="display:${state.mainView==='jugadoras'?'block':'none'}"><div id="ui-player-shell"></div><div id="jcontent" class="content-pad"></div></main><main id="view-admin" style="display:${state.mainView==='admin'?'block':'none'}"><div id="pin-wall" class="admin-pin-card" style="display:${state.adminUnlocked?'none':'block'}"><h2>Administración</h2><label for="pin-input">Contraseña</label><input type="password" id="pin-input" autocomplete="current-password" onkeydown="if(event.key==='Enter')checkPin()"><button class="btn btn-pink ui-full" onclick="checkPin()">Ingresar</button><p id="pin-err" role="alert" hidden>Contraseña incorrecta</p></div><div id="admin-panel" style="display:${state.adminUnlocked?'block':'none'}"><div id="acatbar" class="ui-admin-nav"></div><div id="cta" class="pillbar-sm"></div><div id="acontent" class="content-pad"></div></div></main><footer class="ui-footer">Cuadro del torneo · by @marcosgavassaa</footer>`;};
+switchMain=function(v){if(!uiLeaveEditor())return;state.mainView=v;renderMainTabs();if(v==='jugadoras')renderJ();else if(state.adminUnlocked)renderA();};
+checkPin=function(){if(document.getElementById('pin-input').value===ADMIN_PASSWORD){state.adminUnlocked=true;document.getElementById('pin-wall').style.display='none';document.getElementById('admin-panel').style.display='block';renderA();}else{const e=document.getElementById('pin-err');e.hidden=false;e.style.display='block';}};
+renderJ=function(){uiRestore();const p=uiSelected();const shell=document.getElementById('ui-player-shell');if(!shell)return;shell.innerHTML=`<div class="ui-page-heading"><div><small>Todo lo que necesitás para jugar</small><h2>${p?'Hola, '+uiEsc(p.name.split(' ')[0]):'Encontrá tu partido'}</h2></div>${p?`<span class="ui-badge">${uiEsc(p.name)} · ${uiEsc(catLabel(p.cat))} · ${uiEsc(groupLabel(p.gid))}</span>`:''}</div><section class="ui-search"><label for="ui-player-query">Buscá tu nombre o elegilo de la lista</label><div class="ui-search-fields"><input id="ui-player-query" type="search" placeholder="Escribí nombre o apellido…" value="${uiEsc(ui.query)}" oninput="uiSearch(this.value)" autocomplete="off"><select id="ui-player-select" aria-label="Lista de jugadoras de todas las categorías" onchange="if(this.value!=='')uiSelectFromList(this.value)"></select></div><div id="ui-search-results" class="ui-search-results"></div><p class="ui-muted">Podés explorar todas las categorías y volver a tu torneo cuando quieras.</p></section><nav class="ui-public-nav" aria-label="Torneo">${[['home','Mi torneo'],['browse','Grupos y categorías'],['matches','Partidos'],['playoff','Cuadro final']].map(([tab,label])=>`<button class="pill-sm ${ui.tab===tab?'active':''}" aria-pressed="${ui.tab===tab}" onclick="uiTab('${tab}')">${label}</button>`).join('')}</nav><div id="ui-public-filters"></div>`;uiPlayerOptions();renderJContent();};
+switchCatJ=uiCategory;
+switchSubJ=function(tab){ui.tab=tab==='grupos'?'browse':tab==='proximos'?'matches':tab;renderJ();};
+renderJContent=function(){const target=document.getElementById('jcontent'),filters=document.getElementById('ui-public-filters');if(!target||!filters)return;const p=uiSelected();if(!p&&ui.scope==='mine')ui.scope='all';const browsing=ui.tab==='browse'||ui.tab==='playoff'||ui.tab==='matches'&&ui.scope==='all';const gg=grupos[state.cat]||[];if(ui.group!=='all'&&!gg.some(g=>g.id===ui.group))ui.group='all';filters.innerHTML=browsing?`<div class="ui-explore-controls"><div><label>Explorar categorías</label><div class="ui-categories">${UI_CATS.map(cat=>`<button class="pill-sm ${cat===state.cat?'active':''}" aria-pressed="${cat===state.cat}" onclick="uiCategory('${cat}')">${uiEsc(catLabel(cat))}</button>`).join('')}</div></div>${ui.tab!=='playoff'?`<div><label for="ui-public-group">Grupo</label><select id="ui-public-group" onchange="uiGroup(this.value)"><option value="all">Todos los grupos</option>${gg.map(g=>`<option value="${uiEsc(g.id)}" ${g.id===ui.group?'selected':''}>${uiEsc(groupLabel(g.id))}</option>`).join('')}</select></div>`:''}</div>`:'';
+  if(ui.tab==='reglamento'){target.innerHTML=`<section class="ui-card"><h2>Reglamento</h2>${reglamentoText?renderReglamentoHtml(reglamentoText):'<p class="ui-muted">La organización publicará el reglamento en este espacio.</p>'}</section>`;return;}
+  if(ui.tab==='direcciones'){const map=uiUrl(torneoInfo.direccionesLink),img=uiUrl(torneoInfo.direccionesMapa,true);target.innerHTML=`<section class="ui-card"><h2>Ubicación y cómo llegar</h2><p>${uiEsc(torneoInfo.subtitulo)}</p>${map?`<a class="btn btn-pink" href="${uiEsc(map)}" target="_blank" rel="noopener noreferrer">Abrir ubicación en Maps</a>`:''}${img?`<img class="ui-map" src="${uiEsc(img)}" alt="Mapa de acceso a las canchas">`:''}</section>`;return;}
+  if(ui.tab==='playoff'){const po=playoffData[state.cat];target.innerHTML=po?`${po.isPreview?'<div class="preview-banner">Cuadro provisional · pendiente de confirmación</div>':''}${renderBracketTree(po)}`:'<div class="ui-card"><h3>El cuadro final todavía no está publicado</h3><p class="ui-muted">Podés seguir los resultados en la fase de grupos.</p></div>';return;}
+  if(ui.tab==='browse'){target.innerHTML=`<div class="ui-group-grid">${gg.filter(g=>ui.group==='all'||g.id===ui.group).map(g=>uiGroupCard(g,state.cat)).join('')||'<p class="empty">Todavía no hay parejas en esta categoría.</p>'}</div><details class="ui-details" ontoggle="if(this.open)renderPublicView(state.cat,'grupos','ui-full-standings')"><summary>Ver clasificación completa, rankings y cuadro final</summary><div id="ui-full-standings"></div></details>`;return;}
+  const own=uiAllMatches().filter(m=>p&&(m.p1===p.id||m.p2===p.id)).sort(uiSortMatches);
+  if(ui.tab==='matches'){const list=ui.scope==='mine'?own:uiAllMatches().filter(m=>m.cat===state.cat&&(ui.group==='all'||m.grupoId===ui.group)).sort(uiSortMatches);target.innerHTML=`<div class="ui-scope"><button class="btn ${ui.scope==='mine'?'btn-pink':'btn-out'}" ${p?'':'disabled'} onclick="uiScope('mine')">Mis partidos</button><button class="btn ${ui.scope==='all'?'btn-pink':'btn-out'}" onclick="uiScope('all')">Partidos de la categoría</button><span class="ui-muted">${list.length} partidos</span></div><div class="ui-match-list">${list.map(m=>uiMatchCard(m)).join('')||'<p class="empty">No hay partidos para mostrar.</p>'}</div>`;return;}
+  if(!p){target.innerHTML='<section class="ui-card"><h3>Elegí tu nombre para ver tu torneo</h3><p>Encontrarás tu próximo partido, tu pareja y tu grupo.</p><button class="btn btn-pink" onclick="document.getElementById(\'ui-player-query\').focus()">Buscarme</button></section>';return;}
+  const next=own.find(m=>!m.played&&!m.isPreview&&m.p1&&m.p2),g=grupos[p.cat].find(g=>g.id===p.gid);let upcoming='<h3>No tenés partidos pendientes con rivales definidos.</h3><p class="ui-muted">Consultá el cuadro final para seguir la próxima fase.</p>';if(next){const s=getSched(next.id),d=getSchedDisplay(s);upcoming=`<div class="ui-kicker">Tu próximo partido</div><div class="ui-next-time">${uiEsc(s.after?'A continuación':s.hora||'Horario a confirmar')}</div><h3>${s.cancha?'Cancha '+uiEsc(s.cancha):'Cancha a confirmar'}</h3>${d.waitNames?`<p class="ui-muted">Después de ${uiEsc(d.waitNames)}</p>`:''}<p class="ui-muted">${uiEsc(uiMatchLabel(next))}</p><div class="ui-rivals"><small>Jugás contra</small><h3>${uiPair(next.p1===p.id?next.p2:next.p1)}</h3></div>`;}
+  target.innerHTML=`<div class="ui-group-grid"><section class="ui-card ui-next">${upcoming}<button class="btn btn-pink ui-full" onclick="uiShowMine()">Ver mis partidos</button></section>${g?uiGroupCard(g,p.cat):''}</div><button class="btn ui-link ui-full" onclick="uiOtherGroups()">Ver los demás grupos de mi categoría</button>`;
+};
+
+// Los IDs de cruces antiguos (sf1, f1...) se repetían entre categorías.
+// Las nuevas asignaciones de horario se guardan con categoría; se siguen leyendo
+// los horarios anteriores como respaldo, sin borrar ni migrar datos existentes.
+const uiLegacyGetSched=getSched;
+getSched=function(id){
+  if(matchSchedule[id])return matchSchedule[id];
+  if(id.startsWith('po:'))return uiLegacyGetSched(decodeURIComponent(id.split(':').slice(2).join(':')));
+  return uiLegacyGetSched(id);
+};
+const uiLegacyFindMatch=findMatchById;
+findMatchById=function(id){return uiAllMatches().find(m=>m.id===id)||uiLegacyFindMatch(id);};
+const uiLegacyBracket=renderBracketTree;
+renderBracketTree=function(po){
+  const cat=UI_CATS.find(c=>playoffData[c]===po);
+  if(!cat)return uiLegacyBracket(po);
+  const copy=uiClone(po);
+  copy.rounds.forEach(r=>r.matches.forEach(m=>{m.id=uiPlayoffId(cat,m.id);}));
+  return uiLegacyBracket(copy);
+};
+
+const uiLegacyRenderAContent=renderAContent;
+const uiSettingsSections=['ajustes','reglamento','tiebreak','export'];
+state.adminSection='matches';
+renderA=function(){
+  if(!document.getElementById('acontent'))return;
+  const section=state.adminSection;
+  document.getElementById('acatbar').innerHTML=`<div class="ui-section-heading"><h2>Administración</h2><button class="btn ui-link" onclick="switchAdminSection('live')">Ver clasificación en vivo</button></div><nav class="ui-public-nav" aria-label="Administración">${[['matches','Partidos'],['pairs','Parejas y grupos'],['playoff','Cuadro final'],['ajustes','Configuración']].map(([id,label])=>`<button class="pill-sm ${(id===section||id==='ajustes'&&uiSettingsSections.includes(section))?'active':''}" onclick="switchAdminSection('${id}')">${label}</button>`).join('')}</nav>`;
+  const cats=document.getElementById('cta');
+  cats.innerHTML='';
+  cats.style.display=['pairs','playoff'].includes(section)?'flex':'none';
+  if(['pairs','playoff'].includes(section))buildCatTabs('cta',state.adminCat,'switchCatA');
+  renderAContent();
+};
+function uiLeaveEditor(){
+  if(ui.busy)return false;
+  if(ui.editor&&ui.editor.dirty&&!confirm('Tenés cambios sin guardar. ¿Descartarlos?'))return false;
+  ui.editor=null;return true;
+}
+switchAdminSection=function(section){if(!uiLeaveEditor())return;state.adminSection=['sched','results'].includes(section)?'matches':section;renderA();};
+switchCatA=function(cat){if(!uiLeaveEditor())return;state.adminCat=cat;renderA();};
+renderAContent=function(){
+  if(state.adminSection==='matches'){uiRenderMatches();return;}
+  uiLegacyRenderAContent();
+  if(uiSettingsSections.includes(state.adminSection))document.getElementById('acontent').insertAdjacentHTML('afterbegin',`<nav class="ui-settings-nav" aria-label="Configuración del torneo">${[['ajustes','Datos y sponsors'],['reglamento','Reglamento'],['tiebreak','Desempates'],['export','Exportar']].map(([id,label])=>`<button class="btn ${id===state.adminSection?'btn-pink':'btn-out'}" onclick="switchAdminSection('${id}')">${label}</button>`).join('')}</nav>`);
+};
+function uiAdminFilter(field,value){if(!uiLeaveEditor())return;ui[field]=value;if(field==='adminCat')ui.adminGroup='all';uiRenderMatches();}
+function uiAdminSearch(value){ui.adminQuery=value;uiRenderMatchList();}
+function uiNoticeHtml(){return `<div id="ui-admin-notice" class="ui-notice ${ui.noticeError?'ui-error':''}" role="${ui.noticeError?'alert':'status'}" ${ui.notice?'':'hidden'}>${uiEsc(ui.notice)}${ui.undo&&!ui.noticeError?'<button class="btn ui-link" onclick="uiUndo()">Deshacer último cambio</button>':''}</div>`;}
+function uiRenderMatches(){
+  const all=uiAllMatches(),pending=all.filter(m=>!m.played&&!m.isPreview).length;
+  const groups=(ui.adminCat==='all'?UI_CATS:[ui.adminCat]).flatMap(c=>(grupos[c]||[]).map(g=>({id:g.id,name:catLabel(c)+' · '+groupLabel(g.id)})));
+  document.getElementById('acontent').innerHTML=`<div class="ui-section-heading"><div><h2>Partidos</h2><p class="ui-muted">${pending} pendientes · Horarios y resultados en un solo lugar</p></div></div>${uiNoticeHtml()}<section class="ui-admin-filters" aria-label="Filtros de partidos"><div><label for="ui-admin-cat">Categoría</label><select id="ui-admin-cat" onchange="uiAdminFilter('adminCat',this.value)"><option value="all">Todas las categorías</option>${UI_CATS.map(c=>`<option value="${c}" ${ui.adminCat===c?'selected':''}>${uiEsc(catLabel(c))}</option>`).join('')}</select></div><div><label for="ui-admin-group">Grupo o fase</label><select id="ui-admin-group" onchange="uiAdminFilter('adminGroup',this.value)"><option value="all">Todos los grupos y fases</option><option value="playoff" ${ui.adminGroup==='playoff'?'selected':''}>Cuadro final</option>${groups.map(g=>`<option value="${uiEsc(g.id)}" ${ui.adminGroup===g.id?'selected':''}>${uiEsc(g.name)}</option>`).join('')}</select></div><div><label for="ui-admin-status">Estado</label><select id="ui-admin-status" onchange="uiAdminFilter('adminStatus',this.value)">${[['pending','Pendientes'],['done','Finalizados'],['all','Todos']].map(([v,l])=>`<option value="${v}" ${ui.adminStatus===v?'selected':''}>${l}</option>`).join('')}</select></div><div><label for="ui-admin-query">Buscar jugadora</label><input id="ui-admin-query" type="search" value="${uiEsc(ui.adminQuery)}" placeholder="Nombre o apellido" oninput="uiAdminSearch(this.value)"></div></section><div id="ui-editor-slot"></div><div id="ui-admin-match-list"></div>`;
+  uiRenderMatchList();uiRenderEditor();
+}
+function uiRenderMatchList(){
+  const target=document.getElementById('ui-admin-match-list');if(!target)return;
+  const query=uiNorm(ui.adminQuery);
+  const list=uiAllMatches().filter(m=>(ui.adminCat==='all'||m.cat===ui.adminCat)&&(ui.adminGroup==='all'||m.grupoId===ui.adminGroup)&&(ui.adminStatus==='all'||(ui.adminStatus==='done'?m.played:!m.played))&&(!query||uiNorm(pNombre(m.p1)+' '+pNombre(m.p2)).includes(query))).sort(uiSortMatches);
+  target.innerHTML=`<p class="ui-muted ui-list-count" role="status">${list.length} partidos encontrados</p><div class="ui-match-list">${list.map(m=>uiMatchCard(m,true)).join('')||'<div class="ui-card"><p>No hay partidos con estos filtros.</p><button class="btn ui-link" onclick="uiResetFilters()">Mostrar todos</button></div>'}</div>`;
+}
+function uiResetFilters(){if(!uiLeaveEditor())return;ui.adminCat='all';ui.adminGroup='all';ui.adminStatus='all';ui.adminQuery='';uiRenderMatches();}
+function uiResultSnapshot(m){return {sets:uiClone(m.sets||[]),played:!!m.played,simulated:!!m.simulated};}
+function uiOpenEditor(id,kind){
+  if(!state.adminUnlocked||!uiLeaveEditor())return;
+  const m=uiAllMatches().find(m=>m.id===id);if(!m)return;
+  if(kind==='result'&&(!m.p1||!m.p2||m.isPreview)){showToast('Confirmá el cuadro y las dos parejas antes de cargar un resultado.');return;}
+  const s=getSched(id),sets=m.sets||[];
+  ui.editor={id,kind,dirty:false,error:'',before:kind==='schedule'?uiClone(s):m.isPlayoff?uiClone(playoffData[m.cat]):uiResultSnapshot(m),draft:{a:sets[0]?.[0]??'',b:sets[0]?.[1]??'',stb:sets[1]?(sets[1][0]>sets[1][1]?'1':'2'):'',cancha:s.cancha||'',hora:s.hora||'',after:!!s.after,afterMatchId:s.afterMatchId||''}};
+  state.adminSection='matches';renderA();
+  document.getElementById('ui-editor')?.scrollIntoView?.({behavior:'smooth',block:'center'});
+  document.querySelector('#ui-editor input')?.focus();
+}
+function uiDraft(field,value){if(ui.busy||!ui.editor)return;ui.editor.draft[field]=value;ui.editor.dirty=true;}
+function uiAfter(checked){uiDraft('after',checked);uiRenderEditor();}
+function uiCloseEditor(){if(uiLeaveEditor())uiRenderMatches();}
+function uiRenderEditor(){
+  const slot=document.getElementById('ui-editor-slot');if(!slot)return;
+  const e=ui.editor;if(!e){slot.innerHTML='';return;}
+  const m=uiAllMatches().find(m=>m.id===e.id);if(!m){slot.innerHTML='';return;}
+  const d=e.draft,n1=pNombre(m.p1),n2=pNombre(m.p2);
+  let fields='';
+  if(e.kind==='result'){
+    fields=`<p class="ui-muted">Ingresá los games del set. Si hubo supertiebreak, elegí la pareja ganadora; se registra 1–0.</p><div class="ui-editor-grid"><div><label for="ui-score-a">${uiEsc(n1)}</label><input id="ui-score-a" type="number" inputmode="numeric" min="0" max="7" step="1" value="${uiEsc(d.a)}" oninput="uiDraft('a',this.value)"></div><div><label for="ui-score-b">${uiEsc(n2)}</label><input id="ui-score-b" type="number" inputmode="numeric" min="0" max="7" step="1" value="${uiEsc(d.b)}" oninput="uiDraft('b',this.value)"></div></div><label for="ui-stb">Supertiebreak</label><select id="ui-stb" onchange="uiDraft('stb',this.value)"><option value="">No se jugó</option><option value="1" ${d.stb==='1'?'selected':''}>Ganó ${uiEsc(n1)}</option><option value="2" ${d.stb==='2'?'selected':''}>Ganó ${uiEsc(n2)}</option></select>`;
+  }else{
+    const others=uiAllMatches().filter(x=>x.id!==m.id).sort(uiSortMatches);
+    fields=`<div class="ui-editor-grid"><div><label for="ui-court">Cancha</label><input id="ui-court" type="number" inputmode="numeric" min="1" max="20" step="1" value="${uiEsc(d.cancha)}" oninput="uiDraft('cancha',this.value)"></div><div><label for="ui-hour">Hora</label><input id="ui-hour" type="time" value="${uiEsc(d.hora)}" ${d.after?'disabled':''} oninput="uiDraft('hora',this.value)"></div></div><label class="ui-checkbox"><input type="checkbox" ${d.after?'checked':''} onchange="uiAfter(this.checked)">A continuación de otro partido</label>${d.after?`<label for="ui-after-match">Partido anterior</label><select id="ui-after-match" onchange="uiDraft('afterMatchId',this.value)"><option value="">Elegí el partido</option>${others.map(x=>`<option value="${uiEsc(x.id)}" ${d.afterMatchId===x.id?'selected':''}>${uiEsc(uiMatchLabel(x)+' · '+pNombre(x.p1)+' vs '+pNombre(x.p2))}</option>`).join('')}</select>`:''}`;
+  }
+  slot.innerHTML=`<section class="ui-card ui-editor" id="ui-editor" aria-labelledby="ui-editor-title"><h3 id="ui-editor-title">${e.kind==='result'?(m.played?'Editar resultado':'Cargar resultado'):'Asignar cancha y horario'}</h3><p class="ui-muted">${uiEsc(uiMatchLabel(m))} · ${uiEsc(n1)} vs ${uiEsc(n2)}</p><fieldset ${ui.busy?'disabled':''}>${fields}<p class="ui-error-text" role="alert" ${e.error?'':'hidden'}>${uiEsc(e.error)}</p><div class="ui-editor-buttons"><button class="btn btn-pink" onclick="uiSaveEditor()">${ui.busy?'Guardando…':'Guardar '+(e.kind==='result'?'resultado':'horario')}</button><button class="btn btn-out" onclick="uiCloseEditor()">Cancelar</button>${e.kind==='result'&&m.played?'<button class="btn ui-link" onclick="uiRemoveResult()">Quitar resultado</button>':''}</div></fieldset></section>`;
+}
+function uiWinner(sets){const wins=sets.reduce((n,s)=>n+(s[0]>s[1]?1:s[1]>s[0]?-1:0),0);return Math.sign(wins);}
+function uiReadScore(d){
+  const a=Number(d.a),b=Number(d.b),sets=[];
+  if(d.a!==''||d.b!==''){
+    if(d.a===''||d.b===''||![a,b].every(n=>Number.isInteger(n)&&n>=0&&n<=7))throw new Error('Completá los games de las dos parejas con números enteros entre 0 y 7.');
+    sets.push([a,b]);
+  }
+  if(d.stb)sets.push(d.stb==='1'?[1,0]:[0,1]);
+  if(!sets.length||!uiWinner(sets))throw new Error('El resultado debe definir una pareja ganadora. Revisá los games y el supertiebreak.');
+  return sets;
+}
+function uiCheckSchedule(m,s){
+  if(s.cancha&&(!Number.isInteger(Number(s.cancha))||Number(s.cancha)<1||Number(s.cancha)>20))throw new Error('Ingresá una cancha entre 1 y 20.');
+  if(s.hora&&!/^([01]\d|2[0-3]):[0-5]\d$/.test(s.hora))throw new Error('Revisá la hora del partido.');
+  if(s.after){
+    if(!s.afterMatchId||!findMatchById(s.afterMatchId))throw new Error('Elegí el partido que tiene que terminar antes.');
+    const seen=new Set([m.id]);let id=s.afterMatchId;
+    while(id){if(seen.has(id))throw new Error('Estos partidos se esperan entre sí. Elegí otro partido anterior.');seen.add(id);const prev=getSched(id);id=prev.after?prev.afterMatchId:'';}
+  }
+  const conflict=uiAllMatches().find(other=>{if(other.id===m.id||other.played)return false;const x=getSched(other.id);return !x.after&&!s.after&&s.cancha&&s.hora&&String(x.cancha)===String(s.cancha)&&x.hora===s.hora;});
+  if(conflict)throw new Error('Esa cancha y hora ya están asignadas a '+pNombre(conflict.p1)+' vs '+pNombre(conflict.p2)+'.');
+}
+async function uiWrite(query){const result=await query;if(result.error)throw new Error('No se pudo guardar. Revisá la conexión y volvé a intentar.');return result.data;}
+function uiPropagate(po,ri,mi,winner){
+  let affected=0;
+  for(let r=ri+1;r<po.rounds.length;r++){
+    const next=po.rounds[r].matches[Math.floor(mi/2)];if(!next)break;
+    const slot=mi%2===0?'p1':'p2';
+    if(next[slot]===winner)break;
+    next[slot]=winner;
+    if(next.sets?.length)affected++;
+    next.sets=[];next.winner=null;winner=null;mi=Math.floor(mi/2);
+  }
+  return affected;
+}
+async function uiPersistPlayoff(cat,po){await uiWrite(supabaseClient.from('playoff').upsert({categoria:cat,datos:{rounds:po.rounds},es_vista_previa:!!po.isPreview}).select('categoria').single());}
+async function uiSaveEditor(remove=false){
+  if(ui.busy||!ui.editor||!state.adminUnlocked)return;
+  const e=ui.editor,m=uiAllMatches().find(m=>m.id===e.id);if(!m)return;
+  let commit,undo=null;
+  try{
+    if(e.kind==='schedule'){
+      const d=e.draft,s={cancha:String(d.cancha).trim(),hora:d.after?'':d.hora,after:d.after,afterMatchId:d.after?d.afterMatchId:''};
+      uiCheckSchedule(m,s);
+      commit=async()=>{await uiWrite(supabaseClient.from('horarios').upsert({partido_id:m.id,cancha:s.cancha,hora:s.hora,a_continuacion:s.after,a_continuacion_de:s.afterMatchId}).select('partido_id').single());matchSchedule[m.id]=s;};
+      undo={kind:'schedule',id:m.id,before:e.before,after:s};
+    }else{
+      const sets=remove?[]:uiReadScore(e.draft);
+      if(m.isPlayoff){
+        const po=uiClone(playoffData[m.cat]),match=po.rounds[m.ri].matches[m.mi];
+        match.sets=sets;match.winner=sets.length?(uiWinner(sets)>0?match.p1:match.p2):null;
+        const affected=uiPropagate(po,m.ri,m.mi,match.winner);
+        if(affected&&!confirm(`Al cambiar la ganadora se quitarán ${affected} resultados de rondas posteriores que dependían de ella. ¿Guardar la corrección?`))return;
+        commit=async()=>{await uiPersistPlayoff(m.cat,po);playoffData[m.cat]=po;};
+        undo={kind:'playoff',cat:m.cat,before:e.before,after:uiClone(po)};
+      }else{
+        const result={sets,played:!remove,simulated:false};
+        commit=async()=>{await uiWrite(supabaseClient.from('partidos').update({sets,jugado:!remove,simulado:false}).eq('id',m.id).select('id').single());Object.assign(partidos.find(x=>x.id===m.id),result);};
+        undo={kind:'result',id:m.id,before:e.before,after:result};
+      }
+    }
+    ui.busy=true;e.error='';uiRenderEditor();
+    await commit();
+    ui.undo=undo;ui.notice=(remove?'Resultado quitado':e.kind==='schedule'?'Horario guardado':'Resultado guardado')+' correctamente.';ui.noticeError=false;ui.editor=null;ui.loadedAt=Date.now();
+  }catch(error){e.error=error.message||'No se pudo guardar. Tus datos siguen en el formulario.';}
+  finally{ui.busy=false;uiRenderMatches();uiUpdateSync();}
+}
+function uiRemoveResult(){if(ui.editor&&confirm('¿Quitar este resultado y dejar el partido pendiente?'))return uiSaveEditor(true);}
+async function uiUndo(){
+  if(ui.busy||!ui.undo||!state.adminUnlocked||!uiLeaveEditor())return;
+  const undo=ui.undo;ui.busy=true;
+  try{
+    const table=undo.kind==='result'?'partidos':undo.kind==='schedule'?'horarios':'playoff';
+    const key=undo.kind==='playoff'?'categoria':undo.kind==='schedule'?'partido_id':'id';
+    const row=await uiWrite(supabaseClient.from(table).select('*').eq(key,undo.cat||undo.id).single());
+    const current=undo.kind==='result'?{sets:row.sets||[],played:!!row.jugado,simulated:!!row.simulado}:undo.kind==='schedule'?{cancha:row.cancha||'',hora:row.hora||'',after:!!row.a_continuacion,afterMatchId:row.a_continuacion_de||''}:{...row.datos,isPreview:!!row.es_vista_previa};
+    if(JSON.stringify(current)!==JSON.stringify(undo.after))throw new Error('El partido cambió desde que lo guardaste. Actualizá los datos antes de corregirlo.');
+    if(undo.kind==='result'){
+      const old=undo.before;
+      await uiWrite(supabaseClient.from('partidos').update({sets:old.sets,jugado:old.played,simulado:old.simulated}).eq('id',undo.id).select('id').single());
+      Object.assign(partidos.find(m=>m.id===undo.id),old);
+    }else if(undo.kind==='schedule'){
+      const s=undo.before,m=uiAllMatches().find(m=>m.id===undo.id);if(m)uiCheckSchedule(m,s);
+      await uiWrite(supabaseClient.from('horarios').upsert({partido_id:undo.id,cancha:s.cancha,hora:s.hora,a_continuacion:s.after,a_continuacion_de:s.afterMatchId}).select('partido_id').single());
+      matchSchedule[undo.id]=uiClone(s);
+    }else{await uiPersistPlayoff(undo.cat,undo.before);playoffData[undo.cat]=uiClone(undo.before);}
+    ui.undo=null;ui.notice='Último cambio deshecho.';ui.noticeError=false;
+  }catch(error){ui.notice=error.message;ui.noticeError=true;}
+  finally{ui.busy=false;uiRenderMatches();}
+}
+
+// Se conserva la generación y configuración del cuadro; cada cruce usa el mismo
+// editor de horarios/resultados que la fase de grupos.
+const uiLegacySectionPlayoff=renderSectionPlayoff;
+renderSectionPlayoff=function(cat){
+  const old=uiLegacySectionPlayoff(cat),marker='<div style="margin-top:1.5rem;font-size:12px;font-weight:500;color:var(--pink);">Editar cruces, cancha/hora y resultados</div>';
+  const split=old.indexOf(marker);if(split<0)return old;
+  const pairs=(grupos[cat]||[]).flatMap(g=>g.parejas);
+  return old.slice(0,split)+`<h3 class="ui-subheading">Cruces y partidos del cuadro</h3><div class="ui-match-list">${uiAllMatches().filter(m=>m.isPlayoff&&m.cat===cat).map(m=>`<div>${uiMatchCard(m,true)}<details class="ui-details"><summary>Cambiar parejas de este cruce</summary><p class="ui-muted">Si cambia una pareja, se quita el resultado de este cruce y se revisan sus rondas posteriores.</p><div class="ui-editor-grid">${['p1','p2'].map((slot,i)=>`<div><label>Pareja ${i+1}<select onchange="uiChangePlayoffPair(${uiArg(m.id)},'${slot}',this.value)"><option value="">Por definir</option>${pairs.map(p=>`<option value="${uiEsc(p.id)}" ${m[slot]===p.id?'selected':''}>${uiEsc(pNombre(p.id))}</option>`).join('')}</select></label></div>`).join('')}</div></details></div>`).join('')}</div>`;
+};
+async function uiChangePlayoffPair(id,slot,value){
+  const m=uiAllMatches().find(x=>x.id===id);if(!m||ui.busy)return;
+  if(value&&value===m[slot==='p1'?'p2':'p1']){showToast('Elegí dos parejas diferentes.');renderA();return;}
+  if((value||null)===m[slot])return;
+  const po=uiClone(playoffData[m.cat]),match=po.rounds[m.ri].matches[m.mi];
+  match[slot]=value||null;const hadResult=!!match.sets?.length;match.sets=[];match.winner=null;
+  const affected=uiPropagate(po,m.ri,m.mi,null);
+  if((hadResult||affected)&&!confirm('Cambiar esta pareja quitará los resultados que dependan de este cruce. ¿Continuar?')){renderA();return;}
+  ui.busy=true;
+  try{await uiPersistPlayoff(m.cat,po);playoffData[m.cat]=po;ui.undo=null;showToast('Cruce actualizado.');}catch(e){showToast(e.message);}finally{ui.busy=false;renderA();}
+}
+
+// Información visible del torneo: actualizar la cabecera después de guardar.
+guardarSponsors=async function(){
+  const next=leerSponsorsDelForm().filter(s=>s.logo||s.nombre);
+  try{await uiWrite(supabaseClient.from('configuracion').upsert({clave:'sponsors',valor:next}).select('clave').single());sponsorsList=next;document.getElementById('ui-sponsors').innerHTML=uiSponsors();renderAContent();showToast('Sponsors guardados.');}catch(e){showToast(e.message);}
+};
+saveReglamento=async function(){const value=document.getElementById('reglamentoInput').value;try{await uiWrite(supabaseClient.from('configuracion').upsert({clave:'reglamento',valor:value}).select('clave').single());reglamentoText=value;showToast('Reglamento guardado.');}catch(e){showToast(e.message);}};
+guardarTorneoInfo=async function(){
+  const next={titulo:document.getElementById('tiTitulo').value.trim()||TORNEO_INFO_DEFAULT.titulo,subtitulo:document.getElementById('tiSubtitulo').value.trim(),direccionesLink:document.getElementById('tiDirLink').value.trim(),direccionesMapa:document.getElementById('tiDirMapa').value.trim()};
+  try{await uiWrite(supabaseClient.from('configuracion').upsert({clave:'torneo_info',valor:next}).select('clave').single());torneoInfo=next;renderMainTabs();renderA();showToast('Datos del torneo guardados.');}catch(e){showToast(e.message);}
+};
+
+const uiLegacyLoadAllData=loadAllData;
+loadAllData=async function(){await uiLegacyLoadAllData();ui.loadedAt=Date.now();ui.refreshError=false;};
+function uiUpdateSync(){const el=document.getElementById('ui-sync-status');if(el)el.textContent=uiSyncLabel();}
+async function uiRefresh(manual=false){
+  if(ui.busy||ui.refreshing||!ui.loadedAt)return;
+  if(!manual&&(state.mainView==='admin'||document.hidden||document.activeElement?.matches('input,select,textarea')||document.querySelector('#view-jugadoras details[open]')))return;
+  if(manual&&state.mainView==='admin'&&!confirm('Actualizar vuelve a cargar los datos guardados. Se descartarán los campos que todavía no guardaste. ¿Continuar?'))return;
+  ui.refreshing=true;uiUpdateSync();
+  try{
+    await loadAllData();ui.editor=null;ui.undo=null;ui.notice='';
+    renderMainTabs();if(state.mainView==='admin'&&state.adminUnlocked)renderA();else renderJ();
+  }catch(e){ui.refreshError=true;if(manual)showToast('No se pudo actualizar. Seguís viendo los últimos datos cargados.');}
+  finally{ui.refreshing=false;uiUpdateSync();}
+}
+window.addEventListener('beforeunload',event=>{if(ui.busy||ui.editor?.dirty){event.preventDefault();event.returnValue='';}});
+window.addEventListener('online',()=>uiRefresh(false));
+window.setInterval(()=>uiRefresh(false),30000);
+
+
 initApp();
